@@ -1,0 +1,12 @@
+# udev rules for snappy-web-agent USB device
+# VID: 0xb1b0, PID: 0x5508
+# This rule allows non-root users to access the snappy device
+
+# Set permissions for the snappy USB device
+SUBSYSTEM=="tty", ATTRS{idVendor}=="b1b0", ATTRS{idProduct}=="5508", MODE="0666", GROUP="dialout", TAG+="uaccess"
+
+# Alternative rule for USB devices (in case the device appears as a USB device rather than tty)
+SUBSYSTEM=="usb", ATTRS{idVendor}=="b1b0", ATTRS{idProduct}=="5508", MODE="0666", GROUP="dialout", TAG+="uaccess"
+
+# For devices that appear under /dev/serial/by-id/
+SUBSYSTEM=="tty", ATTRS{idVendor}=="b1b0", ATTRS{idProduct}=="5508", SYMLINK+="snappy-device"

@@ -1,0 +1,46 @@
+[package]
+name = "snappy-web-agent"
+version = "1.0.1-beta.2"
+edition = "2024"
+description = "Snappy Web Agent for hardware communication"
+authors = ["YuduRobotics"]
+license = "MIT"
+homepage = "https://github.com/gouthamsk98/snappy-web-agent"
+repository = "https://github.com/gouthamsk98/snappy-web-agent"
+
+[package.metadata.deb]
+maintainer = "YuduRobotics <support@yudurobotics.com>"
+copyright = "2025, YuduRobotics"
+extended-description = "A web agent service for communicating with hardware devices via serial ports and web interfaces."
+depends = "$auto"
+section = "utils"
+priority = "optional"
+assets = [
+    ["target/release/snappy-web-agent", "usr/bin/", "755"],
+    ["debian/snappy-web-agent.service", "lib/systemd/system/", "644"],
+    ["debian/99-snappy-web-agent.rules", "usr/share/snappy-web-agent/", "644"],
+]
+maintainer-scripts = "debian/"
+
+[package.metadata.encryption]
+key = [0x9c2f6d44, 0xa68b3179, 0xf2c1be0a, 0x7d54c3f1, 0x3e118d6b, 0x4f0b92e7, 0x1dac785c, 0xe6132fa8]
+
+[dependencies]
+tokio = { version = "1", features = ["full"] }
+serialport = "4.2"
+axum = { version = "0.8", features = ["multipart"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+tower-http = { version = "0.6.2", features = ["cors"] }
+tracing = "0.1.37"
+tracing-subscriber = "0.3.17"
+socketioxide = "0.17.2"
+toml = "0.9.2"
+chrono = { version = "0.4", features = ["serde"] }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+udev = { version = "0.9" }
+
+[target.'cfg(windows)'.dependencies]
+windows-service = "0.8"
+rusb = "0.9"

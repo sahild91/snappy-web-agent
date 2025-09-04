@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <title>Installation Complete</title>
+    <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, sans-serif; margin: 20px; }
+        h1 { color: #1d1d1f; }
+        p { color: #515154; line-height: 1.5; }
+        .success { color: #30a46c; font-weight: bold; }
+        .code { padding: 10px; border-radius: 4px; font-family: monospace; font-size: 12px; }
+    </style>
+</head>
+<body>
+    <h1>Installation Complete!</h1>
+    <p class="success">✓ Snappy Web Agent has been successfully installed and started.</p>
+    
+    <h2>What's Next?</h2>
+    <p>The Snappy Web Agent is now running as a background service and will automatically start on system boot.</p>
+    
+    <h2>Service Management</h2>
+    <p>To manage the service, use these commands in Terminal:</p>
+    <div class="code">
+# Check service status<br>
+sudo launchctl list | grep com.snappy.webagent<br><br>
+
+# Stop the service<br>
+sudo launchctl stop com.snappy.webagent<br><br>
+
+# Start the service<br>
+sudo launchctl start com.snappy.webagent<br><br>
+
+# View logs<br>
+tail -f /var/log/snappy-web-agent/stdout.log
+    </div>
+    
+    <h2>Connecting</h2>
+    <p>The agent will be available on the first available port starting from 8436. Check the logs to see which port it's using.</p>
+</body>
+</html>

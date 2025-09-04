@@ -1,0 +1,14 @@
+[Unit]
+Description=Snappy Web Agent Service
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/snappy-web-agent
+Restart=on-failure
+RestartSec=5
+User=root
+Group=root
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="utf-8"?>
+<installer-gui-script minSpecVersion="1">
+    <title>Snappy Web Agent</title>
+    <organization>com.snappy.webagent</organization>
+    <domains enable_localSystem="true"/>
+    <options customize="never" require-scripts="true" rootVolumeOnly="true"/>
+    
+    <!-- Define documents displayed at various steps -->
+    <welcome    file="welcome.html"/>
+    <license    file="license.html"/>
+    <conclusion file="conclusion.html"/>
+    
+    <!-- List all component packages -->
+    <pkg-ref id="com.snappy.webagent" version="0.1.0">snappy-web-agent-component.pkg</pkg-ref>
+    
+    <!-- List them again here. They can now be organized
+         as a hierarchy if you want. -->
+    <choices-outline>
+        <line choice="default">
+            <line choice="com.snappy.webagent"/>
+        </line>
+    </choices-outline>
+    
+    <!-- Define the choice items -->
+    <choice id="default"/>
+    <choice id="com.snappy.webagent" visible="false">
+        <pkg-ref id="com.snappy.webagent"/>
+    </choice>
+</installer-gui-script>

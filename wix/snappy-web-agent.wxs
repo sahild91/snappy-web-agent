@@ -1,0 +1,165 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Wix xmlns="http://schemas.microsoft.com/wix/2006/wi">
+  <Product Id="*" Name="Snappy Web Agent" Language="1033" Version="1.0.0" Manufacturer="YuduRobotics" UpgradeCode="12345678-1234-1234-1234-123456789012">
+    <Package InstallerVersion="500" Compressed="yes" InstallScope="perMachine" InstallPrivileges="elevated" 
+             Description="Snappy Web Agent - Serial device communication service"
+             Comments="Installs Snappy Web Agent service for serial device data collection"
+             Keywords="Serial,USB,Data Collection,Service"
+             Platform="x64" />
+
+    <!-- Require Windows 7 or later -->
+    <Condition Message="This application requires Windows 7 or later.">
+      <![CDATA[Installed OR (VersionNT >= 601)]]>
+    </Condition>
+
+    <!-- Require Administrator privileges -->
+    <Condition Message="You must be an administrator to install this application.">
+      <![CDATA[Installed OR Privileged]]>
+    </Condition>
+
+    <MajorUpgrade DowngradeErrorMessage="A newer version of [ProductName] is already installed." />
+    <MediaTemplate EmbedCab="yes" />
+
+    <!-- Custom Properties -->
+    <Property Id="ARPPRODUCTICON" Value="icon.ico" />
+    <Property Id="ARPHELPLINK" Value="https://github.com/gouthamsk98/snappy-web-agent" />
+    <Property Id="ARPURLINFOABOUT" Value="https://github.com/gouthamsk98/snappy-web-agent" />
+    <Property Id="ARPNOREPAIR" Value="1" />
+    <!-- Removed ARPNOMODIFY to avoid duplicate symbol with WixUI_InstallDir -->
+    
+    <!-- License file property -->
+    <Property Id="WixUILicenseRtf" Value="LICENSE.rtf" />
+
+    <!-- Directory Structure -->
+    <Directory Id="TARGETDIR" Name="SourceDir">
+      <Directory Id="ProgramFiles64Folder">
+        <Directory Id="CompanyFolder" Name="YuduRobotics">
+          <Directory Id="INSTALLFOLDER" Name="Snappy Web Agent">
+            <Directory Id="DocsFolder" Name="docs" />
+          </Directory>
+        </Directory>
+      </Directory>
+      <Directory Id="CommonAppDataFolder">
+        <Directory Id="AppDataCompanyFolder" Name="YuduRobotics">
+          <Directory Id="AppDataAppFolder" Name="Snappy Web Agent">
+            <Directory Id="LogsFolder" Name="logs" />
+            <Directory Id="ConfigFolder" Name="config" />
+          </Directory>
+        </Directory>
+      </Directory>
+      <Directory Id="ProgramMenuFolder">
+        <Directory Id="ApplicationProgramsFolder" Name="Snappy Web Agent" />
+      </Directory>
+    </Directory>
+
+        <!-- Components -->
+        <ComponentGroup Id="ProductComponents">
+            <!-- Executable Components -->
+                <Component Id="MainExecutableX64" Guid="9F6F8E9A-4E5D-4A7E-9E3D-9A6C2B7D1F10" Directory="INSTALLFOLDER" Win64="yes">
+      <File Id="MainExeX64" Source="..\build\x64\snappy-web-agent.exe" KeyPath="yes" />
+      <ServiceInstall Id="SnappyWebAgentService"
+                      Name="SnappyWebAgent"
+                      DisplayName="Snappy Web Agent Service"
+                      Description="Snappy Web Agent - Serial device data collection and streaming service"
+                      Type="ownProcess"
+                      Start="auto"
+                      Account="LocalSystem"
+                      ErrorControl="normal"
+                      Interactive="no" />
+      <ServiceControl Id="StartService" Name="SnappyWebAgent" Start="install" Stop="both" Remove="uninstall" Wait="yes" />
+    </Component>
+
+            <!-- Service Manager Script -->
+            <Component Id="ServiceManager" Guid="A2D31B7C-7B84-4F0A-A6E1-2D45F9B6C3A1" Directory="INSTALLFOLDER" Win64="yes">
+                <File Id="ServiceManagerBat" Source="service-manager.bat" KeyPath="yes" />
+            </Component>
+        </ComponentGroup>
+
+        <!-- Documentation Components in docs folder -->
+        <ComponentGroup Id="DocumentationComponents">
+            <!-- Documentation -->
+            <Component Id="Documentation" Guid="C4E8A9D2-3F61-42D5-9F7B-1B2C3D4E5F60" Directory="DocsFolder" Win64="yes">
+                <File Id="ReadmeFile" Source="..\README.md" KeyPath="yes" />
+            </Component>
+
+            <!-- License File -->
+            <Component Id="LicenseFile" Guid="D5F7A8B9-1C2E-4F3A-8B6D-9E7A5C2F1B8D" Directory="DocsFolder" Win64="yes">
+                <File Id="LicenseRtf" Source="..\LICENSE.rtf" KeyPath="yes" />
+            </Component>
+        </ComponentGroup>
+
+    <!-- Start Menu Shortcuts -->
+    <DirectoryRef Id="ApplicationProgramsFolder">
+      <Component Id="ApplicationShortcut" Guid="*">
+        <Shortcut Id="ServiceManagerShortcut"
+                  Name="Snappy Web Agent Service Manager"
+                  Description="Manage Snappy Web Agent Service"
+                  Target="[INSTALLFOLDER]service-manager.bat"
+                  WorkingDirectory="INSTALLFOLDER" />
+        <Shortcut Id="UninstallShortcut"
+                  Name="Uninstall Snappy Web Agent"
+                  Description="Uninstall Snappy Web Agent"
+                  Target="[SystemFolder]msiexec.exe"
+                  Arguments="/x [ProductCode]" />
+        <Shortcut Id="ReadmeShortcut"
+                  Name="README"
+                  Description="Read the documentation"
+                  Target="[INSTALLFOLDER]docs\README.md" />
+        <RemoveFolder Id="ApplicationProgramsFolder" On="uninstall" />
+        <RegistryValue Root="HKCU" Key="Software\YuduRobotics\Snappy Web Agent" Name="installed" Type="integer" Value="1" KeyPath="yes" />
+      </Component>
+    </DirectoryRef>
+
+    <!-- Logs Directory -->
+    <Component Id="LogsDirectory" Guid="E8F9A0B1-C2D3-4E5F-9012-3456789ABCDE" Directory="LogsFolder">
+      <CreateFolder />
+      <RemoveFolder Id="LogsFolder" On="uninstall" />
+      <RegistryValue Root="HKLM" Key="Software\YuduRobotics\Snappy Web Agent" Name="LogsPath" Type="string" Value="[LogsFolder]" KeyPath="yes" />
+    </Component>
+
+    <!-- Config Directory -->
+    <Component Id="ConfigDirectory" Guid="F1A2B3C4-D5E6-F7A8-B9C0-D1E2F3A4B5C6" Directory="ConfigFolder">
+      <CreateFolder />
+      <RemoveFolder Id="ConfigFolder" On="uninstall" />
+      <RegistryValue Root="HKLM" Key="Software\YuduRobotics\Snappy Web Agent" Name="ConfigPath" Type="string" Value="[ConfigFolder]" KeyPath="yes" />
+    </Component>
+
+    <!-- Registry entries for version and install path -->
+    <Component Id="RegistryEntries" Guid="A1B2C3D4-E5F6-A7B8-C9D0-E1F2A3B4C5D6" Directory="INSTALLFOLDER" Win64="yes">
+      <RegistryValue Root="HKLM" Key="Software\YuduRobotics\Snappy Web Agent" Name="Version" Type="string" Value="1.0.0" KeyPath="yes" />
+      <RegistryValue Root="HKLM" Key="Software\YuduRobotics\Snappy Web Agent" Name="InstallPath" Type="string" Value="[INSTALLFOLDER]" />
+      <RegistryValue Root="HKLM" Key="Software\YuduRobotics\Snappy Web Agent" Name="ServiceName" Type="string" Value="SnappyWebAgent" />
+    </Component>
+
+    <!-- Feature Definition -->
+        <Feature Id="ProductFeature" Title="Snappy Web Agent" Level="1" Description="Core application and service components">
+            <ComponentGroupRef Id="ProductComponents" />
+            <ComponentGroupRef Id="DocumentationComponents" />
+            <ComponentRef Id="ApplicationShortcut" />
+            <ComponentRef Id="LogsDirectory" />
+            <ComponentRef Id="ConfigDirectory" />
+            <ComponentRef Id="RegistryEntries" />
+            <ComponentRef Id="MainExecutableX64" />
+        </Feature>
+
+    <!-- Custom Actions -->
+    <CustomAction Id="SetARPINSTALLLOCATION" Property="ARPINSTALLLOCATION" Value="[INSTALLFOLDER]" />
+    
+    <!-- Installation Sequence -->
+    <InstallExecuteSequence>
+      <Custom Action="SetARPINSTALLLOCATION" After="CostFinalize" />
+    </InstallExecuteSequence>
+
+    <!-- UI Configuration -->
+    <Property Id="WIXUI_INSTALLDIR" Value="INSTALLFOLDER" />
+    <UIRef Id="WixUI_InstallDir" />
+    <UIRef Id="WixUI_ErrorProgressText" />
+
+    <!-- Custom banner and dialog images (optional) -->
+    <!-- 
+    <WixVariable Id="WixUIBannerBmp" Value="banner.bmp" />
+    <WixVariable Id="WixUIDialogBmp" Value="dialog.bmp" />
+    -->
+
+  </Product>
+</Wix>

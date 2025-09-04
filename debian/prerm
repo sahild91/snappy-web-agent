@@ -1,0 +1,12 @@
+#!/bin/sh
+set -e
+
+SYSTEMD_SERVICE=snappy-web-agent.service
+
+if command -v systemctl >/dev/null 2>&1; then
+    systemctl stop ${SYSTEMD_SERVICE} || true
+    systemctl disable ${SYSTEMD_SERVICE} || true
+    systemctl daemon-reload || true
+fi
+
+exit 0

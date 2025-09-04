@@ -1,0 +1,61 @@
+#!/bin/bash
+
+# Snappy Web Agent Post-Install Script
+
+BUNDLE_ID="com.snappy.webagent"
+APP_NAME="snappy-web-agent"
+PLIST_PATH="/Library/LaunchDaemons/$BUNDLE_ID.plist"
+
+echo "Configuring Snappy Web Agent daemon..."
+
+# Set proper permissions
+chown root:wheel "/usr/local/bin/$APP_NAME"
+chmod 755 "/usr/local/bin/$APP_NAME"
+
+# Set permissions for plist
+chown root:wheel "$PLIST_PATH"
+chmod 644 "$PLIST_PATH"
+
+# Create log directory with proper permissions
+mkdir -p "/var/log/$APP_NAME"
+chown root:wheel "/var/log/$APP_NAME"
+chmod 755 "/var/log/$APP_NAME"
+
+# Load the daemon
+echo "Loading daemon..."
+if launchctl load "$PLIST_PATH"; then
+    echo "✓ Daemon loaded successfully"
+else
+    echo "⚠ Warning: Failed to load daemon"
+fi
+
+# Start the daemon
+echo "Starting daemon..."
+if launchctl start "$BUNDLE_ID"; then
+    echo "✓ Daemon started successfully"
+    echo "✓ Snappy Web Agent is now running in the background"
+    echo "✓ It will automatically start on system boot"
+else
+    echo "⚠ Warning: Failed to start daemon"
+fi
+
+# Show status
+echo ""
+echo "Daemon status:"
+launchctl list | grep "$BUNDLE_ID" || echo "Daemon not found in list"
+
+echo ""
+echo "Installation completed!"
+echo "The Snappy Web Agent is now running as a background service."
+echo "It will automatically start whenever the system boots."
+echo ""
+echo "To check logs:"
+echo "  tail -f /var/log/$APP_NAME/stdout.log"
+echo "  tail -f /var/log/$APP_NAME/stderr.log"
+echo ""
+echo "To manually control the service:"
+echo "  sudo launchctl stop $BUNDLE_ID"
+echo "  sudo launchctl start $BUNDLE_ID"
+echo "  sudo launchctl unload $PLIST_PATH"
+
+exit 0

@@ -1,0 +1,27 @@
+#!/bin/sh
+set -e
+
+SYSTEMD_SERVICE=snappy-web-agent.service
+UDEV_RULES_FILE=99-snappy-web-agent.rules
+UDEV_RULES_DIR=/etc/udev/rules.d
+
+# Install udev rules
+if [ -f "/usr/share/snappy-web-agent/${UDEV_RULES_FILE}" ]; then
+    cp "/usr/share/snappy-web-agent/${UDEV_RULES_FILE}" "${UDEV_RULES_DIR}/"
+    chmod 644 "${UDEV_RULES_DIR}/${UDEV_RULES_FILE}"
+    
+    # Reload udev rules
+    if command -v udevadm >/dev/null 2>&1; then
+        udevadm control --reload-rules || true
+        udevadm trigger || true
+    fi
+fi
+
+# Handle systemd service
+if command -v systemctl >/dev/null 2>&1; then
+    systemctl daemon-reload || true
+    systemctl enable ${SYSTEMD_SERVICE} || true
+    systemctl restart ${SYSTEMD_SERVICE} || true
+fi
+
+exit 0

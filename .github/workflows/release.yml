@@ -1,0 +1,330 @@
+name: Build and Release
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Release version (e.g., v1.0.0)"
+        required: true
+        default: "v1.0.0"
+
+env:
+  CARGO_TERM_COLOR: always
+  APP_NAME: snappy-web-agent
+  COMPANY_NAME: YuduRobotics
+
+jobs:
+  build-macos:
+    runs-on: macos-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+          profile: minimal
+          override: true
+
+      - name: Add Rust targets
+        run: |
+          rustup target add x86_64-apple-darwin
+          rustup target add aarch64-apple-darwin
+
+      - name: Cache Cargo dependencies
+        uses: actions/cache@v3
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
+
+      - name: Build for x86_64-apple-darwin
+        run: cargo build --release --target x86_64-apple-darwin
+
+      - name: Build for aarch64-apple-darwin
+        run: cargo build --release --target aarch64-apple-darwin
+
+      - name: Create universal binary
+        run: |
+          mkdir -p build
+          lipo -create \
+            target/x86_64-apple-darwin/release/${{ env.APP_NAME }} \
+            target/aarch64-apple-darwin/release/${{ env.APP_NAME }} \
+            -output build/${{ env.APP_NAME }}-universal
+
+      - name: Create macOS distribution
+        run: |
+          chmod +x build_macos.sh
+          ./build_macos.sh
+
+      - name: Upload macOS artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-release
+          path: |
+            ${{ env.APP_NAME }}-*.pkg
+            macOS_Installation_Guide.md
+            uninstall_${{ env.APP_NAME }}.sh
+
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+          profile: minimal
+          override: true
+
+      - name: Add Rust targets
+        run: |
+          rustup target add x86_64-pc-windows-msvc
+          rustup target add i686-pc-windows-msvc
+
+      - name: Cache Cargo dependencies
+        uses: actions/cache@v3
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
+
+      - name: Install WiX Toolset
+        run: |
+          Invoke-WebRequest -Uri "https://github.com/wixtoolset/wix3/releases/download/wix3112rtm/wix311.exe" -OutFile "wix311.exe"
+          Start-Process -FilePath "wix311.exe" -ArgumentList "/S" -Wait
+          echo "C:\Program Files (x86)\WiX Toolset v3.11\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+
+      - name: Build for x86_64-pc-windows-msvc
+        run: cargo build --release --target x86_64-pc-windows-msvc
+
+      - name: Build for i686-pc-windows-msvc
+        run: cargo build --release --target i686-pc-windows-msvc
+
+      - name: Create Windows distribution (PowerShell)
+        shell: powershell
+        run: |
+          Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser -Force
+          .\build_windows.ps1
+
+      - name: Upload Windows artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-release
+          path: |
+            ${{ env.APP_NAME }}-*-setup.msi
+            Windows_Installation_Guide.md
+            uninstall_${{ env.APP_NAME }}.bat
+
+  create-release:
+    needs: [build-macos, build-windows]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Download macOS artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: macos-release
+          path: ./release/macos/
+
+      - name: Download Windows artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: windows-release
+          path: ./release/windows/
+
+      - name: Get version from tag
+        id: get_version
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "VERSION=${{ github.event.inputs.version }}" >> $GITHUB_OUTPUT
+          else
+            echo "VERSION=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+          fi
+
+      - name: List release files
+        run: |
+          echo "=== macOS Release Files ==="
+          ls -la ./release/macos/
+          echo "=== Windows Release Files ==="
+          ls -la ./release/windows/
+
+      - name: Create Release Notes
+        run: |
+          cat > RELEASE_NOTES.md << 'EOF'
+          # Snappy Web Agent ${{ steps.get_version.outputs.VERSION }}
+
+          ## 🚀 Features
+          - Real-time serial device data collection and streaming
+          - Dynamic port selection (starts from 8436)
+          - Socket.IO API for start/stop data collection
+          - ChaCha20 encryption for secure data transmission
+          - Cross-platform background service support
+          - Professional installer packages for both platforms
+
+          ## 📦 Downloads
+
+          ### macOS
+          - **Universal Binary (Intel + Apple Silicon)**: `${{ env.APP_NAME }}-${{ steps.get_version.outputs.VERSION }}.pkg`
+          - Supports macOS 10.15+ (Catalina and later)
+          - Automatic launchd daemon installation
+          - Native macOS installer experience
+
+          ### Windows
+          - **MSI Installer (x64 + x86)**: `${{ env.APP_NAME }}-*-setup.msi`
+          - Supports Windows 7/8/10/11 (32-bit and 64-bit)
+          - Automatic Windows Service installation
+          - Professional MSI installer with uninstall support
+
+          ## 📚 Documentation
+          - `macOS_Installation_Guide.md` - Complete macOS setup guide
+          - `Windows_Installation_Guide.md` - Complete Windows setup guide
+          - `README.md` - API documentation and usage examples
+
+          ## 🔧 Installation
+
+          ### macOS
+          1. Download the `.pkg` file
+          2. Double-click to install
+          3. Service starts automatically
+
+          ### Windows
+          1. Download the `.msi` file
+          2. Run as Administrator
+          3. Service installs and starts automatically
+
+          ## 🌐 Socket.IO API
+          - **Base URL**: `http://localhost:<dynamic-port>`
+          - **Events**: 
+            - `start-snappy` - Begin data collection
+            - `stop-snappy` - Stop data collection
+            - `snap-data` - Real-time data stream
+          - **Commands**: Device detection, data encryption, status monitoring
+
+          ## 🔒 Security
+          - ChaCha20 encryption for serial data
+          - Secure Socket.IO communication
+          - Service runs with appropriate system permissions
+
+          ## 🛠 Technical Details
+          - Built with Rust 2024 Edition
+          - Axum web framework with Socket.IO
+          - Cross-platform serial communication
+          - Professional service management
+          - Universal binaries for optimal performance
+
+          ## Copyright
+          Copyright (c) YuduRobotics. All rights reserved.
+          EOF
+
+      - name: Create GitHub Release
+        id: create_release
+        uses: actions/create-release@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tag_name: ${{ steps.get_version.outputs.VERSION }}
+          release_name: Snappy Web Agent ${{ steps.get_version.outputs.VERSION }}
+          body_path: RELEASE_NOTES.md
+          draft: false
+          prerelease: false
+
+      # Upload macOS files
+      - name: Upload macOS PKG
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ steps.create_release.outputs.upload_url }}
+          asset_path: ./release/macos/${{ env.APP_NAME }}-${{ steps.get_version.outputs.VERSION }}.pkg
+          asset_name: ${{ env.APP_NAME }}-${{ steps.get_version.outputs.VERSION }}-macos-universal.pkg
+          asset_content_type: application/octet-stream
+
+      - name: Upload macOS Installation Guide
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ steps.create_release.outputs.upload_url }}
+          asset_path: ./release/macos/macOS_Installation_Guide.md
+          asset_name: macOS_Installation_Guide.md
+          asset_content_type: text/markdown
+
+      - name: Upload macOS Uninstaller
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ steps.create_release.outputs.upload_url }}
+          asset_path: ./release/macos/uninstall_${{ env.APP_NAME }}.sh
+          asset_name: uninstall_${{ env.APP_NAME }}-macos.sh
+          asset_content_type: application/x-sh
+
+      # Upload Windows files
+      - name: Find Windows MSI
+        id: find_msi
+        run: |
+          MSI_FILE=$(ls ./release/windows/${{ env.APP_NAME }}-*-setup.msi | head -n 1)
+          echo "MSI_PATH=$MSI_FILE" >> $GITHUB_OUTPUT
+          echo "MSI_NAME=$(basename $MSI_FILE)" >> $GITHUB_OUTPUT
+
+      - name: Upload Windows MSI
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ steps.create_release.outputs.upload_url }}
+          asset_path: ${{ steps.find_msi.outputs.MSI_PATH }}
+          asset_name: ${{ env.APP_NAME }}-${{ steps.get_version.outputs.VERSION }}-windows-installer.msi
+          asset_content_type: application/x-msi
+
+      - name: Upload Windows Installation Guide
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ steps.create_release.outputs.upload_url }}
+          asset_path: ./release/windows/Windows_Installation_Guide.md
+          asset_name: Windows_Installation_Guide.md
+          asset_content_type: text/markdown
+
+      - name: Upload Windows Uninstaller
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ steps.create_release.outputs.upload_url }}
+          asset_path: ./release/windows/uninstall_${{ env.APP_NAME }}.bat
+          asset_name: uninstall_${{ env.APP_NAME }}-windows.bat
+          asset_content_type: application/x-bat
+
+      - name: Release Summary
+        run: |
+          echo "🎉 Release ${{ steps.get_version.outputs.VERSION }} created successfully!"
+          echo "📦 Release URL: ${{ steps.create_release.outputs.html_url }}"
+          echo ""
+          echo "📋 Released Assets:"
+          echo "  macOS:"
+          echo "    - ${{ env.APP_NAME }}-${{ steps.get_version.outputs.VERSION }}-macos-universal.pkg"
+          echo "    - macOS_Installation_Guide.md"
+          echo "    - uninstall_${{ env.APP_NAME }}-macos.sh"
+          echo "  Windows:"
+          echo "    - ${{ env.APP_NAME }}-${{ steps.get_version.outputs.VERSION }}-windows-installer.msi"
+          echo "    - Windows_Installation_Guide.md"
+          echo "    - uninstall_${{ env.APP_NAME }}-windows.bat"

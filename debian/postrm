@@ -1,0 +1,25 @@
+#!/bin/sh
+set -e
+
+SYSTEMD_SERVICE=snappy-web-agent.service
+UDEV_RULES_FILE=99-snappy-web-agent.rules
+UDEV_RULES_DIR=/etc/udev/rules.d
+
+# Remove udev rules on purge
+if [ "$1" = "purge" ]; then
+    if [ -f "${UDEV_RULES_DIR}/${UDEV_RULES_FILE}" ]; then
+        rm -f "${UDEV_RULES_DIR}/${UDEV_RULES_FILE}"
+        
+        # Reload udev rules
+        if command -v udevadm >/dev/null 2>&1; then
+            udevadm control --reload-rules || true
+            udevadm trigger || true
+        fi
+    fi
+fi
+
+if command -v systemctl >/dev/null 2>&1; then
+    systemctl daemon-reload || true
+fi
+
+exit 0
