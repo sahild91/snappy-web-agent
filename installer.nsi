@@ -2,7 +2,7 @@
 ; Compatible with NSIS 3.x and works great with Wine cross-compilation
 
 !define APP_NAME "Snappy Web Agent"
-!define APP_VERSION "1.0.1"
+!define APP_VERSION "1.0.2"
 !define APP_PUBLISHER "YuduRobotics"
 !define APP_URL "https://yudurobotics.com"
 !define APP_EXECUTABLE "snappy-web-agent.exe"
@@ -55,7 +55,7 @@ VIAddVersionKey "ProductVersion" "${APP_VERSION}"
 Section "Core Application" SecCore
   SectionIn RO
   SetOutPath "$INSTDIR"
-  File "build\x64\${APP_EXECUTABLE}"
+  File "target\x86_64-pc-windows-msvc\release\${APP_EXECUTABLE}"
   File "README.md"
   File "LICENSE.rtf"
   File "wix\service-manager.bat"

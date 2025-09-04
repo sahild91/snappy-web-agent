@@ -1,6 +1,6 @@
 [package]
 name = "snappy-web-agent"
-version = "1.0.1-beta.2"
+version = "1.0.2-beta.1"
 edition = "2024"
 description = "Snappy Web Agent for hardware communication"
 authors = ["YuduRobotics"]

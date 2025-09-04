@@ -17,61 +17,62 @@ fn get_serial(dev: &str) -> Option<String> {
         .ok()
         .map(|s| s.trim().to_string())
 }
-#[cfg(target_os = "windows")]
-fn get_serial(dev: &str) -> Option<String> {
-    // For Windows, use USB control transfer to get serial number directly from device
-    get_serial_via_usb_control_transfer(dev)
-}
 
-#[cfg(target_os = "windows")]
-fn get_serial_via_usb_control_transfer(_dev: &str) -> Option<String> {
-    use rusb::{ Context, UsbContext };
+// #[cfg(target_os = "windows")]
+// fn get_serial(dev: &str) -> Option<String> {
+//     // For Windows, use USB control transfer to get serial number directly from device
+//     get_serial_via_usb_control_transfer(dev)
+// }
 
-    // Create USB context
-    let context = match Context::new() {
-        Ok(ctx) => ctx,
-        Err(e) => {
-            info!("Failed to create USB context: {}", e);
-            return None;
-        }
-    };
+// #[cfg(target_os = "windows")]
+// fn get_serial_via_usb_control_transfer(_dev: &str) -> Option<String> {
+//     use rusb::{ Context, UsbContext };
 
-    // Iterate through all USB devices
-    let devices = match context.devices() {
-        Ok(devices) => devices,
-        Err(e) => {
-            info!("Failed to get USB devices: {}", e);
-            return None;
-        }
-    };
+//     // Create USB context
+//     let context = match Context::new() {
+//         Ok(ctx) => ctx,
+//         Err(e) => {
+//             info!("Failed to create USB context: {}", e);
+//             return None;
+//         }
+//     };
 
-    for device in devices.iter() {
-        let device_desc = match device.device_descriptor() {
-            Ok(desc) => desc,
-            Err(_) => {
-                continue;
-            }
-        };
+//     // Iterate through all USB devices
+//     let devices = match context.devices() {
+//         Ok(devices) => devices,
+//         Err(e) => {
+//             info!("Failed to get USB devices: {}", e);
+//             return None;
+//         }
+//     };
 
-        // Check if this could be our target device (you may want to filter by VID/PID)
-        // For now, we'll try all devices that have a serial number descriptor
-        if let Some(descriptor_index) = device_desc.serial_number_string_index() {
-            if descriptor_index > 0 {
-                if
-                    let Some(serial) = get_device_serial_via_control_transfer(
-                        &device,
-                        descriptor_index
-                    )
-                {
-                    info!("Found serial via USB control transfer: {}", serial);
-                    return Some(serial);
-                }
-            }
-        }
-    }
+//     for device in devices.iter() {
+//         let device_desc = match device.device_descriptor() {
+//             Ok(desc) => desc,
+//             Err(_) => {
+//                 continue;
+//             }
+//         };
 
-    None
-}
+//         // Check if this is one of our target devices (check all supported PIDs)
+//         if device_desc.vendor_id() == VID && PIDS.contains(&device_desc.product_id()) {
+//             if let Some(descriptor_index) = device_desc.serial_number_string_index() {
+//                 if descriptor_index > 0 {
+//                     if let Some(serial) = get_device_serial_via_control_transfer(
+//                         &device,
+//                         descriptor_index
+//                     ) {
+//                         info!("Found serial via USB control transfer for PID 0x{:04x}: {}", 
+//                               device_desc.product_id(), serial);
+//                         return Some(serial);
+//                     }
+//                 }
+//             }
+//         }
+//     }
+
+//     None
+// }
 
 #[cfg(target_os = "windows")]
 fn get_device_serial_via_control_transfer(
@@ -149,63 +150,120 @@ fn get_serial(_dev: &str) -> Option<String> {
     None
 }
 
+// New function to check if any of the supported devices is connected
+pub fn is_any_device_connected(vid: u16, pids: &[u16]) -> bool {
+    for &pid in pids {
+        if is_device_connected(vid, pid) {
+            return true;
+        }
+    }
+    false
+}
+
+// Enhanced device detection that returns which PID was found
+pub fn find_connected_device_info(vid: u16, pids: &[u16]) -> Option<(u16, String)> {
+    #[cfg(target_os = "windows")]
+    {
+        use rusb::{ Context, UsbContext };
+
+        let context = match Context::new() {
+            Ok(ctx) => ctx,
+            Err(_) => return None,
+        };
+
+        let devices = match context.devices() {
+            Ok(devices) => devices,
+            Err(_) => return None,
+        };
+
+        for device in devices.iter() {
+            if let Ok(device_desc) = device.device_descriptor() {
+                if device_desc.vendor_id() == vid && pids.contains(&device_desc.product_id()) {
+                    let pid = device_desc.product_id();
+                    let device_name = format!("USB Device (PID: 0x{:04x})", pid);
+                    return Some((pid, device_name));
+                }
+            }
+        }
+        None
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        let ports = serialport::available_ports().unwrap_or_else(|_| vec![]);
+        for available_port in ports {
+            if let serialport::SerialPortType::UsbPort(info) = &available_port.port_type {
+                if info.vid == vid && pids.contains(&info.pid) {
+                    return Some((info.pid, available_port.port_name.clone()));
+                }
+            }
+        }
+        None
+    }
+}
+
 pub async fn start_snappy_with_socket(_socket: SocketRef) {
     // Import the socketio functions
     use crate::socketio::is_snappy_collecting;
 
     let hash_key = Arc::new(Mutex::new(Vec::<u8>::new()));
-    let (tx, mut rx) = tokio::sync::mpsc::channel::<String>(100);
+    let current_device_pid = Arc::new(Mutex::new(None::<u16>));
+    let (tx, mut rx) = tokio::sync::mpsc::channel::<(String, u16)>(100);
     let hash_key_clone = Arc::clone(&hash_key);
+    let current_device_pid_clone = Arc::clone(&current_device_pid);
 
     let serial_port_checker_t = tokio::spawn(async move {
         info!("Checking connection for snappy data collection...");
-        let mut last_connected_port: Option<String> = None;
+        let mut last_connected_device: Option<(String, u16)> = None;
         #[cfg(target_os = "windows")]
-        let mut cached_serial: Option<String> = None; // cache serial once obtained
+        let mut cached_serial: Option<String> = None;
+        
         loop {
             if !is_snappy_collecting() {
                 info!("Snappy data collection stopped");
                 break;
             }
-            let mut detected_port: Option<String> = None;
+            let mut detected_device: Option<(String, u16)> = None;
 
             #[cfg(target_os = "windows")]
             {
-                // If we already have the serial cached, just check device presence.
-                if cached_serial.is_some() {
-                    if is_device_connected(VID, PID) {
-                        // device still present
-                        detected_port = Some("USB_DEVICE".to_string());
+                // Check for any supported device
+                if let Some((found_pid, _device_name)) = find_connected_device_info(VID, PIDS) {
+                    // Update current device PID
+                    {
+                        let mut current_pid = current_device_pid_clone.lock().unwrap();
+                        *current_pid = Some(found_pid);
+                    }
+                    
+                    // If we already have the serial cached for this device, use it
+                    if cached_serial.is_some() {
+                        detected_device = Some(("USB_DEVICE".to_string(), found_pid));
                     } else {
-                        // device disconnected -> clear cache
-                        info!("USB device disconnected, clearing cached serial");
-                        cached_serial = None;
-                        detected_port = None;
+                        // Attempt to get serial for this specific device
+                        if let Some(usb_device_info) = find_usb_device_windows_for_pid(found_pid).await {
+                            if let Some(serial_number) = usb_device_info.serial_number {
+                                let mut hash_key = hash_key_clone.lock().unwrap();
+                                let serial_number_array: Vec<u32> = serial_number
+                                    .chars()
+                                    .map(|c| c as u32)
+                                    .collect();
+                                let serial_number_u8: Vec<u8> = serial_number_array
+                                    .iter()
+                                    .take(16)
+                                    .map(|&c| c as u8)
+                                    .collect();
+                                hash_key.clear();
+                                hash_key.extend_from_slice(&serial_number_u8);
+                                cached_serial = Some(serial_number);
+                            }
+                            detected_device = Some(("USB_DEVICE".to_string(), found_pid));
+                        }
                     }
                 } else {
-                    // No cached serial yet -> attempt full discovery (including serial descriptor)
-                    if let Some(usb_device_info) = find_usb_device_windows().await {
-                        let maybe_serial_number = usb_device_info.serial_number;
-                        if let Some(serial_number) = maybe_serial_number.clone() {
-                            // only cache when we actually have serial
-                            let mut hash_key = hash_key_clone.lock().unwrap();
-                            let serial_number_array: Vec<u32> = serial_number
-                                .chars()
-                                .map(|c| c as u32)
-                                .collect();
-                            let serial_number_u8: Vec<u8> = serial_number_array
-                                .iter()
-                                .take(16)
-                                .map(|&c| c as u8)
-                                .collect();
-                            hash_key.clear();
-                            hash_key.extend_from_slice(&serial_number_u8);
-                            cached_serial = Some(serial_number); // cache
-                        } else {
-                            info!("Serial Number: None (will retry until available)");
-                        }
-                        detected_port = Some("USB_DEVICE".to_string());
-                    }
+                    // No device connected -> clear cache
+                    cached_serial = None;
+                    *current_device_pid_clone.lock().unwrap() = None;
+                    detected_device = None;
                 }
             }
 
@@ -215,7 +273,14 @@ pub async fn start_snappy_with_socket(_socket: SocketRef) {
                 let available_ports = serialport::available_ports().unwrap_or_else(|_| vec![]);
                 for port in available_ports {
                     if let serialport::SerialPortType::UsbPort(info) = &port.port_type {
-                        if info.vid == VID && info.pid == PID {
+                        // Check if this port matches any of our supported PIDs
+                        if info.vid == VID && PIDS.contains(&info.pid) {
+                            // Update current device PID
+                            {
+                                let mut current_pid = current_device_pid_clone.lock().unwrap();
+                                *current_pid = Some(info.pid);
+                            }
+                            
                             let mut hash_key = hash_key_clone.lock().unwrap();
                             let mut maybe_serial_number: Option<String> =
                                 info.serial_number.clone();
@@ -242,94 +307,96 @@ pub async fn start_snappy_with_socket(_socket: SocketRef) {
                                 hash_key.clear();
                                 hash_key.extend_from_slice(&serial_number_u8);
                             } else {
-                                info!("Serial Number: None");
+                                info!("Serial Number: None for PID 0x{:04x}", info.pid);
                             }
-                            detected_port = Some(port.port_name.clone());
+                            detected_device = Some((port.port_name.clone(), info.pid));
                             break;
                         }
                     }
                 }
             }
 
-            if detected_port != last_connected_port {
-                last_connected_port = detected_port.clone();
-                let _ = tx.send(detected_port.clone().unwrap_or_default()).await;
+            if detected_device != last_connected_device {
+                last_connected_device = detected_device.clone();
+                if let Some((device_name, pid)) = detected_device {
+                    let _ = tx.send((device_name, pid)).await;
+                } else {
+                    let _ = tx.send((String::new(), 0)).await;
+                }
             }
             tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
         }
     });
+
     let hash_key_for_task = Arc::clone(&hash_key);
+    let _current_device_pid_for_task = Arc::clone(&current_device_pid);
 
     tokio::spawn(async move {
-        while let Some(path) = rx.recv().await {
+        while let Some((path, device_pid)) = rx.recv().await {
             // Check if we should stop collecting
             if !is_snappy_collecting() {
                 break;
             }
 
             if path.is_empty() {
-                info!("hash key : {:?}", hash_key_for_task.lock().unwrap());
+                info!("No device connected - hash key : {:?}", hash_key_for_task.lock().unwrap());
             } else {
                 let mut hash = [0u8; 32];
                 let serial_number = hash_key_for_task.lock().unwrap().clone();
                 hash_serial(&serial_number, &mut hash);
                 let counter = 0x0u32;
 
+                info!("Device connected for snappy data collection - PID: 0x{:04x}", device_pid);
+
                 #[cfg(target_os = "windows")]
                 {
-                    // For Windows, use USB communication directly (single session with one-time interface claim)
-                    info!("Device connected for snappy data collection via USB");
+                    // For Windows, use USB communication directly
+                    let mut session: Option<UsbSession> = None;
+                    loop {
+                        if !is_snappy_collecting() {
+                            info!("Stopping snappy data collection");
+                            break;
+                        }
 
-                    #[cfg(target_os = "windows")]
-                    {
-                        let mut session: Option<UsbSession> = None;
-                        loop {
-                            if !is_snappy_collecting() {
-                                // stop condition
-                                info!("Stopping snappy data collection");
-                                break;
-                            }
-
-                            // Establish session if missing
-                            if session.is_none() {
-                                match open_usb_session() {
-                                    Ok(s) => {
-                                        info!(
-                                            "USB session established (iface={}, ep=0x{:02x})",
-                                            s.claimed_iface,
-                                            s.endpoint
-                                        );
-                                        session = Some(s);
-                                    }
-                                    Err(e) => {
-                                        info!("Failed to open USB session: {}", e);
-                                        tokio::time::sleep(
-                                            tokio::time::Duration::from_millis(500)
-                                        ).await;
-                                        continue;
-                                    }
+                        // Establish session if missing
+                        if session.is_none() {
+                            match open_usb_session_for_pids(PIDS) {
+                                Ok(s) => {
+                                    info!(
+                                        "USB session established (iface={}, ep=0x{:02x}, PID=0x{:04x})",
+                                        s.claimed_iface,
+                                        s.endpoint,
+                                        s.device_pid
+                                    );
+                                    session = Some(s);
+                                }
+                                Err(e) => {
+                                    info!("Failed to open USB session: {}", e);
+                                    tokio::time::sleep(
+                                        tokio::time::Duration::from_millis(500)
+                                    ).await;
+                                    continue;
                                 }
                             }
+                        }
 
-                            if let Some(s) = session.as_mut() {
-                                match read_snappy_data_via_usb(s, &hash, counter) {
-                                    Some(Ok(data)) => {
-                                        process_serial_message_with_emit(&data);
-                                    }
-                                    Some(Err(e)) => {
-                                        info!("USB read error: {}", e);
-                                        // Drop session so we re-open (e.g., device unplugged)
-                                        session = None;
-                                        tokio::time::sleep(
-                                            tokio::time::Duration::from_millis(250)
-                                        ).await;
-                                    }
-                                    None => {
-                                        // No data this cycle
-                                        tokio::time::sleep(
-                                            tokio::time::Duration::from_millis(10)
-                                        ).await;
-                                    }
+                        if let Some(s) = session.as_mut() {
+                            match read_snappy_data_via_usb(s, &hash, counter) {
+                                Some(Ok(data)) => {
+                                    // Pass the device PID to the processing function
+                                    process_serial_message_with_emit(&data, s.device_pid);
+                                }
+                                Some(Err(e)) => {
+                                    info!("USB read error: {}", e);
+                                    session = None;
+                                    tokio::time::sleep(
+                                        tokio::time::Duration::from_millis(250)
+                                    ).await;
+                                }
+                                None => {
+                                    tokio::time::sleep(
+                                        tokio::time::Duration::from_millis(10)
+                                    ).await;
                                 }
                             }
                         }
@@ -341,13 +408,12 @@ pub async fn start_snappy_with_socket(_socket: SocketRef) {
                     // For other OS, use serial port communication
                     match serialport::new(&path, 230400).timeout(Duration::from_secs(2)).open() {
                         Ok(mut port) => {
-                            info!("Device connected for snappy data collection");
+                            info!("Device connected for snappy data collection - PID: 0x{:04x}", device_pid);
                             let mut buffer = [0; 64];
                             let mut data_buffer: Vec<u8> = Vec::new();
                             tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
 
                             loop {
-                                // Check if we should stop collecting
                                 if !is_snappy_collecting() {
                                     info!("Stopping snappy data collection");
                                     break;
@@ -355,7 +421,7 @@ pub async fn start_snappy_with_socket(_socket: SocketRef) {
 
                                 match port.read(&mut buffer) {
                                     Ok(bytes_read) if bytes_read > 0 => {
-                                        info!("Read {} bytes from serial port", bytes_read);
+                                        info!("Read {} bytes from serial port (PID: 0x{:04x})", bytes_read, device_pid);
                                         data_buffer.extend_from_slice(&buffer[..bytes_read]);
                                         while
                                             let Some(pos) = data_buffer
@@ -371,8 +437,8 @@ pub async fn start_snappy_with_socket(_socket: SocketRef) {
                                                 &mut decrypted
                                             );
 
-                                            // Process and emit data
-                                            process_serial_message_with_emit(decrypted.as_slice());
+                                            // Process and emit data with device PID
+                                            process_serial_message_with_emit(decrypted.as_slice(), device_pid);
 
                                             data_buffer.drain(..pos + 2);
                                         }
@@ -397,7 +463,7 @@ pub async fn start_snappy_with_socket(_socket: SocketRef) {
     serial_port_checker_t.await.expect("Failed to start serial port checker for snappy");
 }
 
-fn process_serial_message_with_emit(message: &[u8]) {
+fn process_serial_message_with_emit(message: &[u8], device_pid: u16) {
     use crate::socketio::emit_snap_data;
 
     if message.len() >= 14 && message[..7] == EXPECTED_PREFIX {
@@ -415,17 +481,16 @@ fn process_serial_message_with_emit(message: &[u8]) {
         // Convert the 2 bytes into a short value in decimal
         let device_value = ((dev_value[0] as u16) << 8) | (dev_value[1] as u16);
 
-        // Emit the data via socket
-        emit_snap_data(mac_str.to_string(), device_value);
+        // Emit the data via socket with PID information
+        emit_snap_data(mac_str.to_string(), device_value, device_pid);
 
-        info!("Emitted snap data - MAC: {}, value: {}", mac_str, device_value);
+        info!("Emitted snap data - MAC: {}, value: {}, PID: 0x{:04x}", mac_str, device_value, device_pid);
     }
 }
 
 pub fn is_device_connected(vid: u16, pid: u16) -> bool {
     #[cfg(target_os = "windows")]
     {
-        // For Windows, check USB devices directly
         use rusb::{ Context, UsbContext };
 
         let context = match Context::new() {
@@ -454,7 +519,6 @@ pub fn is_device_connected(vid: u16, pid: u16) -> bool {
 
     #[cfg(not(target_os = "windows"))]
     {
-        // For other OS, use serial port enumeration
         let ports = serialport::available_ports().unwrap_or_else(|_| vec![]);
         for available_port in ports {
             if let serialport::SerialPortType::UsbPort(info) = &available_port.port_type {
@@ -473,14 +537,14 @@ struct UsbDeviceInfo {
 }
 
 #[cfg(target_os = "windows")]
-async fn find_usb_device_windows() -> Option<UsbDeviceInfo> {
+async fn find_usb_device_windows_for_pid(target_pid: u16) -> Option<UsbDeviceInfo> {
     use rusb::{ Context, UsbContext };
-    // Create USB context
     let context = Context::new().ok()?;
     let devices = context.devices().ok()?;
+    
     for device in devices.iter() {
         let device_desc = device.device_descriptor().ok()?;
-        if device_desc.vendor_id() == VID && device_desc.product_id() == PID {
+        if device_desc.vendor_id() == VID && device_desc.product_id() == target_pid {
             if let Some(idx) = device_desc.serial_number_string_index() {
                 if idx > 0 {
                     if let Some(serial) = get_device_serial_via_control_transfer(&device, idx) {
@@ -494,19 +558,19 @@ async fn find_usb_device_windows() -> Option<UsbDeviceInfo> {
     None
 }
 
-// One-time USB session: context + handle + endpoint + claimed interface
+// Enhanced USB session that tracks which PID it's connected to
 #[cfg(target_os = "windows")]
 struct UsbSession {
     context: rusb::Context,
     handle: rusb::DeviceHandle<rusb::Context>,
     endpoint: u8,
     claimed_iface: u8,
-    // Buffer to accumulate partial frames across USB bulk reads
+    device_pid: u16, // Track which PID this session is for
     accumulator: Vec<u8>,
 }
 
 #[cfg(target_os = "windows")]
-fn open_usb_session() -> Result<UsbSession, String> {
+fn open_usb_session_for_pids(pids: &[u16]) -> Result<UsbSession, String> {
     use rusb::{ Context, UsbContext, Direction, TransferType };
     const PREFERRED_CONFIG: u8 = 1;
     const PREFERRED_INTERFACE: u8 = 1;
@@ -541,11 +605,15 @@ fn open_usb_session() -> Result<UsbSession, String> {
                 continue;
             }
         };
-        if device_desc.vendor_id() != VID || device_desc.product_id() != PID {
+        
+        // Check if this device matches any of our supported PIDs
+        if device_desc.vendor_id() != VID || !pids.contains(&device_desc.product_id()) {
             continue;
         }
 
+        let device_pid = device_desc.product_id();
         let mut handle = device.open().map_err(|e| format!("Open device failed: {e}"))?;
+        
         if let Ok(active) = handle.active_configuration() {
             if active != PREFERRED_CONFIG {
                 let _ = handle.set_active_configuration(PREFERRED_CONFIG);
@@ -559,15 +627,24 @@ fn open_usb_session() -> Result<UsbSession, String> {
         } else if handle.claim_interface(0).is_ok() {
             0
         } else {
-            return Err("Claim interface (1 or 0) failed".into());
+            continue; // Try next device
         };
+        
         let endpoint = find_bulk_in_endpoint(&device, claimed_iface)
             .or_else(|| find_bulk_in_endpoint(&device, 0))
             .unwrap_or(0x81);
 
-        return Ok(UsbSession { context, handle, endpoint, claimed_iface, accumulator: Vec::new() });
+        return Ok(UsbSession { 
+            context, 
+            handle, 
+            endpoint, 
+            claimed_iface, 
+            device_pid,
+            accumulator: Vec::new() 
+        });
     }
-    Err("Target device not found".into())
+    
+    Err("No supported device found".into())
 }
 
 #[cfg(target_os = "windows")]
@@ -577,16 +654,17 @@ fn read_snappy_data_via_usb(
     counter: u32
 ) -> Option<Result<Vec<u8>, String>> {
     use std::time::Duration;
-    const MAX_ACCUMULATOR: usize = 4096; // safety bound
+    const MAX_ACCUMULATOR: usize = 4096;
     let timeout = Duration::from_millis(1000);
     let mut buffer = [0u8; 64];
 
     match session.handle.read_bulk(session.endpoint, &mut buffer, timeout) {
         Ok(bytes_read) if bytes_read > 0 => {
             info!(
-                "Read {} bytes via USB bulk transfer (ep=0x{:02x})",
+                "Read {} bytes via USB bulk transfer (ep=0x{:02x}, PID=0x{:04x})",
                 bytes_read,
-                session.endpoint
+                session.endpoint,
+                session.device_pid
             );
             session.accumulator.extend_from_slice(&buffer[..bytes_read]);
         }
@@ -596,16 +674,13 @@ fn read_snappy_data_via_usb(
         }
     }
 
-    // Prevent unbounded growth if delimiter never appears
     if session.accumulator.len() > MAX_ACCUMULATOR {
         session.accumulator.clear();
         return Some(Err("Accumulator overflow without frame delimiter; buffer reset".into()));
     }
 
-    // Look for complete frame (CRLF delimiter) in accumulator
     if let Some(pos) = session.accumulator.windows(2).position(|w| w == b"\r\n") {
         let ciphertext = session.accumulator[..pos].to_vec();
-        // Drain consumed bytes including delimiter
         session.accumulator.drain(..pos + 2);
 
         let mut decrypted = vec![0u8; ciphertext.len()];
@@ -613,6 +688,5 @@ fn read_snappy_data_via_usb(
         return Some(Ok(decrypted));
     }
 
-    // No complete frame yet
     None
 }

@@ -17,8 +17,8 @@ pub fn is_snappy_collecting() -> bool {
     SNAPPY_COLLECTING.load(Ordering::Relaxed)
 }
 
-// Function to emit snap data
-pub fn emit_snap_data(mac: String, value: u16) {
+// Enhanced function to emit snap data with PID information
+pub fn emit_snap_data(mac: String, value: u16, pid: u16) {
     let socket_ref = SNAPPY_SOCKET.get_or_init(|| Arc::new(Mutex::new(None)));
     if let Ok(socket_guard) = socket_ref.lock() {
         if let Some(ref socket) = *socket_guard {
@@ -28,15 +28,18 @@ pub fn emit_snap_data(mac: String, value: u16) {
                 mac,
                 value,
                 timestamp,
+                pid, // Include PID in the data
             };
 
             let _ = socket.emit("snappy-data", &snap_data);
         }
     }
 }
+
 pub async fn on_connect(socket: SocketRef, Data(_data): Data<Value>) {
     info!(ns = socket.ns(), ?socket.id, "Socket.IO connected");
     check_port_connection(socket.clone());
+    
     socket.on("version", |ack: AckSender| {
         let version = env!("CARGO_PKG_VERSION");
         let serial_response = SerialResponse {
@@ -47,9 +50,31 @@ pub async fn on_connect(socket: SocketRef, Data(_data): Data<Value>) {
         };
         ack.send(&serial_response).ok();
     });
+
+    // Enhanced device info command to show supported PIDs
+    socket.on("device-info", |ack: AckSender| {
+        let supported_pids: Vec<String> = PIDS.iter()
+            .map(|&pid| format!("0x{:04x}", pid))
+            .collect();
+        
+        let device_info = format!(
+            "VID: 0x{:04x}, Supported PIDs: [{}]", 
+            VID, 
+            supported_pids.join(", ")
+        );
+        
+        let serial_response = SerialResponse {
+            success: true,
+            message: device_info,
+            command: "device-info".to_string(),
+            error: None,
+        };
+        ack.send(&serial_response).ok();
+    });
+    
     let socket_for_start = socket.clone();
     socket.on("start-snappy", move |ack: AckSender| {
-        info!("Starting snappy data collection");
+        info!("Starting snappy data collection for all supported devices");
         SNAPPY_COLLECTING.store(true, Ordering::Relaxed);
 
         // Store socket reference for data emission
@@ -66,7 +91,8 @@ pub async fn on_connect(socket: SocketRef, Data(_data): Data<Value>) {
 
         let serial_response = SerialResponse {
             success: true,
-            message: "Snappy data collection started".to_string(),
+            message: format!("Snappy data collection started for PIDs: {:?}", 
+                           PIDS.iter().map(|&p| format!("0x{:04x}", p)).collect::<Vec<_>>()),
             command: "start-snappy".to_string(),
             error: None,
         };
@@ -85,26 +111,44 @@ pub async fn on_connect(socket: SocketRef, Data(_data): Data<Value>) {
 
         let serial_response = SerialResponse {
             success: true,
-            message: "Snappy data collection stopped".to_string(),
+            message: "Snappy data collection stopped for all devices".to_string(),
             command: "stop-snappy".to_string(),
             error: None,
         };
         let _ = ack.send(&serial_response);
     });
 }
+
 fn check_port_connection(socket: SocketRef) {
     tokio::spawn(async move {
         let mut last_status = None;
+        let mut last_connected_pid: Option<u16> = None;
+        
         loop {
-            let status = Some(serial::is_device_connected(VID, PID));
-            if status != last_status {
-                let event_response = EventResponse {
-                    event: "device-connection".to_string(),
-                    status: status.map(|s| s.to_string()).unwrap_or_else(|| "false".to_string()),
+            // Check if any of our supported devices is connected
+            let status = Some(serial::is_any_device_connected(VID, PIDS));
+            let connected_device_info = serial::find_connected_device_info(VID, PIDS);
+            let current_pid = connected_device_info.as_ref().map(|(pid, _)| *pid);
+            
+            // Emit status if connection status changed or if different device connected
+            if status != last_status || current_pid != last_connected_pid {
+                let event_response = if let Some((pid, device_name)) = &connected_device_info {
+                    EventResponse {
+                        event: "device-connection".to_string(),
+                        status: format!("true,pid:0x{:04x},device:{}", *pid, device_name),
+                    }
+                } else {
+                    EventResponse {
+                        event: "device-connection".to_string(),
+                        status: "false".to_string(),
+                    }
                 };
+                
                 socket.emit("device-connected", &event_response).ok();
                 last_status = status;
+                last_connected_pid = current_pid;
             }
+            
             tokio::time::sleep(tokio::time::Duration::from_millis(200)).await;
         }
     });
