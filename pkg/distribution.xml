@@ -11,7 +11,7 @@
     <conclusion file="conclusion.html"/>
     
     <!-- List all component packages -->
-    <pkg-ref id="com.snappy.webagent" version="0.1.0">snappy-web-agent-component.pkg</pkg-ref>
+    <pkg-ref id="com.snappy.webagent" version="1.0.2">snappy-web-agent-component.pkg</pkg-ref>
     
     <!-- List them again here. They can now be organized
          as a hierarchy if you want. -->

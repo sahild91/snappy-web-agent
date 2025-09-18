@@ -15,7 +15,7 @@ A Rust-based web agent for collecting and streaming data from serial devices via
 ### Prerequisites
 
 - Rust 1.75+ (2024 edition)
-- Serial device with VID: `0xb1b0` and PID: `0x5508`
+- Serial device with VID: `0xb1b0` and PIDs: `0x5508`, `0x8055`
 - On Linux: proper udev rules for device access (see [Linux Setup](#linux-setup))
 
 ### Installation
@@ -351,7 +351,7 @@ setTimeout(() => {
 ### Device Requirements
 
 - **Vendor ID (VID):** `0xb1b0`
-- **Product ID (PID):** `0x5508`
+- **Product IDs (PIDs):** `0x5508`, `0x8055`
 - **Baud Rate:** 230400
 - **Data Format:** Encrypted with ChaCha20
 - **Message Prefix:** `SNAPPY:` (0x53 0x4e 0x41 0x50 0x50 0x59 0x3a)

@@ -2,6 +2,3 @@
 cargo.lock
 dist
 build
-
-# Windows specific ignores
-*.exe

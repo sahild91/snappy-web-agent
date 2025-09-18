@@ -8,7 +8,7 @@ set -euo pipefail
 
 # Configuration
 APP_NAME="snappy-web-agent"
-APP_VERSION="0.1.0"
+APP_VERSION="1.0.2"
 BUNDLE_ID="com.snappy.webagent"
 BUILD_DIR="build"
 DIST_DIR="dist"

@@ -797,7 +797,7 @@ The agent automatically finds available ports. If all ports in range are busy:
 **Device not detected:**
 1. Ensure USB device drivers are installed
 2. Check Device Manager for USB devices
-3. Verify device VID/PID (0xb1b0/0x5508)
+3. Verify device VID/PIDs (0xb1b0/0x5508, 0xb1b0/0x8055)
 4. Try different USB ports
 5. Restart the service after connecting device
 

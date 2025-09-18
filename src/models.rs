@@ -1,10 +1,7 @@
 use serde::{ Deserialize, Serialize };
 
 pub const VID: u16 = 0xb1b0;
-// Support multiple PIDs for different device variants
-pub const PIDS: &[u16] = &[0x5508, 0x8055];
-// Keep the original PID for backward compatibility
-pub const PID: u16 = 0x5508;
+pub const PIDS: [u16; 2] = [0x5508, 0x8055];
 pub const EXPECTED_PREFIX: [u8; 7] = [0x53, 0x4e, 0x41, 0x50, 0x50, 0x59, 0x3a];
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -25,7 +22,6 @@ pub struct SnapDataEvent {
     pub mac: String,
     pub value: u16,
     pub timestamp: String,
-    pub pid: u16
 }
 #[derive(Deserialize)]
 pub struct CargoToml {
