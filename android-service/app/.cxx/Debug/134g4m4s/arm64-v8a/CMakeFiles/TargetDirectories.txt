@@ -1,3 +1,0 @@
-D:/Workspace/Rust_Workspace/snappy-web-agent(1)/android-service/app/.cxx/Debug/134g4m4s/arm64-v8a/CMakeFiles/snappy_web_agent.dir
-D:/Workspace/Rust_Workspace/snappy-web-agent(1)/android-service/app/.cxx/Debug/134g4m4s/arm64-v8a/CMakeFiles/edit_cache.dir
-D:/Workspace/Rust_Workspace/snappy-web-agent(1)/android-service/app/.cxx/Debug/134g4m4s/arm64-v8a/CMakeFiles/rebuild_cache.dir
