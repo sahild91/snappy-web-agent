@@ -1,0 +1,71 @@
+// Top-level build file where you can add configuration options common to all sub-projects/modules.
+buildscript {
+    dependencies {
+        classpath 'com.android.tools.build:gradle:8.2.2'
+        
+        // NOTE: Do not place your application dependencies here; they belong
+        // in the individual module build.gradle files
+    }
+}
+
+plugins {
+    id 'com.android.application' version '8.2.2' apply false
+    id 'com.android.library' version '8.2.2' apply false
+}
+
+// Global configuration for all modules
+ext {
+    compileSdkVersion = 34  // Changed from 36 to 34 (36 doesn't exist yet)
+    targetSdkVersion = 34   // Changed from 36 to 34
+    minSdkVersion = 21
+    buildToolsVersion = "34.0.0"  // Changed from 36.0.0 to 34.0.0
+    
+    // Dependency versions
+    appCompatVersion = '1.6.1'
+    materialVersion = '1.11.0'
+    constraintLayoutVersion = '2.1.4'
+    leanbackVersion = '1.0.0'
+    preferenceVersion = '1.2.1'
+    coreVersion = '1.12.0'
+    
+    // Test dependency versions
+    junitVersion = '4.13.2'
+    androidJunitVersion = '1.1.5'
+    espressoVersion = '3.5.1'
+    
+    // NDK and native build configuration
+    ndkVersion = '27.0.12077973'
+    cmakeVersion = '3.22.1'
+}
+
+// Configuration for Rust cross-compilation
+task cleanRustLibs {
+    doLast {
+        delete fileTree(dir: 'app/src/main/jniLibs', include: '**/*')
+    }
+}
+
+// Task to build Rust libraries for all Android architectures
+task buildRustLibs {
+    dependsOn cleanRustLibs
+    
+    doLast {
+        // This task is handled by the build_android_service.sh script
+        // which calls cargo-ndk to cross-compile Rust for Android targets
+        println "Rust libraries should be built by build_android_service.sh script"
+        println "Run: ./build_android_service.sh before building the Android project"
+    }
+}
+
+// Ensure Rust libraries are built before Android compilation
+tasks.whenTaskAdded { task ->
+    if (task.name == 'preBuild') {
+        task.dependsOn buildRustLibs
+    }
+}
+
+// Cleanup task
+task clean(type: Delete) {
+    delete rootProject.buildDir
+    delete fileTree(dir: 'app/src/main/jniLibs', include: '**/*')
+}

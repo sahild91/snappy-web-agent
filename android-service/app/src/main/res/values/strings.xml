@@ -1,0 +1,29 @@
+<resources>
+    <string name="app_name">Snappy Web Agent</string>
+    <string name="service_name">Snappy Web Agent Service</string>
+    <string name="service_description">Background service for serial device communication</string>
+    <string name="service_notification_title">Snappy Web Agent Running</string>
+    <string name="service_notification_text">Serial device communication service is active</string>
+    <string name="service_notification_channel_name">Snappy Web Agent Service</string>
+    <string name="service_notification_channel_description">Notifications for Snappy Web Agent service status</string>
+    
+    <!-- Settings and configuration -->
+    <string name="settings_title">Snappy Web Agent Settings</string>
+    <string name="settings_service_category">Service Configuration</string>
+    <string name="settings_port_title">Service Port</string>
+    <string name="settings_port_summary">Port for Socket.IO server (default: 8436)</string>
+    <string name="settings_autostart_title">Auto-start on Boot</string>
+    <string name="settings_autostart_summary">Start service automatically when device boots</string>
+    
+    <!-- Service status -->
+    <string name="status_running">Service Running</string>
+    <string name="status_stopped">Service Stopped</string>
+    <string name="device_connected">Device Connected</string>
+    <string name="device_disconnected">Device Disconnected</string>
+    
+    <!-- Actions -->
+    <string name="action_start_service">Start Service</string>
+    <string name="action_stop_service">Stop Service</string>
+    <string name="action_restart_service">Restart Service</string>
+    <string name="action_view_logs">View Logs</string>
+</resources>
