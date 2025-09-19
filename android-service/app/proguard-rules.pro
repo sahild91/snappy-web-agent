@@ -5,19 +5,10 @@
 # For more details, see
 #   http://developer.android.com/guide/developing/tools/proguard.html
 
-# If your project uses WebView with JS, uncomment the following
-# and specify the fully qualified class name to the JavaScript interface
-# class:
-#-keepclassmembers class fqcn.of.javascript.interface.for.webview {
-#   public *;
-#}
-
-# Uncomment this to preserve the line number information for
-# debugging stack traces.
+# Uncomment this to preserve the line number information for debugging stack traces.
 -keepattributes SourceFile,LineNumberTable
 
-# If you keep the line number information, uncomment this to
-# hide the original source file name.
+# If you keep the line number information, uncomment this to hide the original source file name.
 #-renamesourcefileattribute SourceFile
 
 # Keep native methods (JNI)
@@ -25,8 +16,9 @@
     native <methods>;
 }
 
-# Keep Snappy Web Agent service classes
+# Keep Snappy Web Agent service classes with their native methods
 -keep class com.yudurobotics.snappywebagent.SnappyWebAgentService {
+    # Core native methods (verified to exist)
     public static native long nativeInit();
     public static native void nativeStart(long);
     public static native void nativeStop(long);
@@ -35,11 +27,16 @@
     public static native void nativeRemoveUsbDevice(long);
     public static native boolean nativeIsRunning(long);
     public static native int nativeGetPort(long);
+    
+    # Additional native methods (may exist in Rust implementation)
     public static native int nativeGetDeviceCount(long);
     public static native boolean nativeHasDevice(long);
+    
+    # Keep all other methods
+    public *;
 }
 
-# Keep service and receiver classes
+# Keep all Snappy Web Agent classes (verified to exist)
 -keep class com.yudurobotics.snappywebagent.SnappyWebAgentService
 -keep class com.yudurobotics.snappywebagent.BootReceiver
 -keep class com.yudurobotics.snappywebagent.ServiceControlReceiver
@@ -56,9 +53,12 @@
 # Keep notification classes
 -keep class androidx.core.app.NotificationCompat** { *; }
 
-# Keep service classes
--keep class android.app.Service
--keep class android.content.BroadcastReceiver
+# Keep service and receiver base classes
+-keep public class * extends android.app.Service
+-keep public class * extends android.content.BroadcastReceiver
+-keep public class * extends android.app.Activity
+-keep public class * extends android.app.Application
+-keep public class * extends android.content.ContentProvider
 
 # Keep R class and resources
 -keepclassmembers class **.R$* {
@@ -90,12 +90,7 @@
 # Material Design Components
 -keep class com.google.android.material.** { *; }
 
-# USB Host API
--keep class android.hardware.usb.UsbDevice { *; }
--keep class android.hardware.usb.UsbManager { *; }
--keep class android.hardware.usb.UsbDeviceConnection { *; }
-
-# Keep classes with special naming patterns
+# Keep classes with special naming patterns (for custom views)
 -keepclasseswithmembers class * {
     public <init>(android.content.Context, android.util.AttributeSet);
 }
@@ -112,13 +107,6 @@
     public void set*(...);
     *** get*();
 }
-
-# Keep activity classes
--keep public class * extends android.app.Activity
--keep public class * extends android.app.Application
--keep public class * extends android.app.Service
--keep public class * extends android.content.BroadcastReceiver
--keep public class * extends android.content.ContentProvider
 
 # Android TV specific
 -keep class * extends androidx.leanback.app.BrowseFragment
