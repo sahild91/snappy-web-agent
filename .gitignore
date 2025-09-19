@@ -1,4 +1,152 @@
-/target
-cargo.lock
-dist
-build
+# Rust
+/target/
+**/*.rs.bk
+Cargo.lock
+
+# Rust analyzer
+.vscode/
+.idea/
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Windows
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+*.cab
+*.msi
+*.msix
+*.msm
+*.msp
+*.lnk
+
+# Linux
+*~
+.fuse_hidden*
+.directory
+.Trash-*
+.nfs*
+
+# Android
+android-service/app/build/
+android-service/app/.cxx/
+android-service/build/
+android-service/.gradle/
+android-service/local.properties
+android-service/captures/
+android-service/.externalNativeBuild/
+android-service/.cxx/
+android-service/app/release/
+android-service/app/debug/
+android-service/app/profile/
+
+# Android Studio
+android-service/.idea/
+android-service/*.iml
+android-service/.idea/workspace.xml
+android-service/.idea/tasks.xml
+android-service/.idea/gradle.xml
+android-service/.idea/assetWizardSettings.xml
+android-service/.idea/dictionaries
+android-service/.idea/libraries
+android-service/.idea/caches
+android-service/.idea/modules.xml
+android-service/.idea/navEditor.xml
+
+# Android Keystore
+android-service/app/*.jks
+android-service/app/*.keystore
+android-service/app/keystore.properties
+
+# Android APK files
+android-service/app/build/outputs/
+*.apk
+*.aab
+*.ap_
+*.dex
+
+# Android Lint
+android-service/lint-report.html
+android-service/lint-report_files/
+android-service/lint-results*
+
+# JNI Libraries (generated)
+android-service/app/src/main/jniLibs/
+
+# NDK
+android-service/app/.cxx/
+android-service/app/src/main/cpp/.cxx/
+
+# Gradle Wrapper (keep gradlew but ignore wrapper jar)
+android-service/.gradle/
+android-service/gradle/wrapper/gradle-wrapper.jar
+
+# Build outputs
+build/
+target/
+out/
+*.log
+
+# Environment files
+.env
+.env.local
+.env.*.local
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Package managers
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Temporary files
+*.tmp
+*.temp
+*.bak
+*.backup
+*.old
+
+# Logs
+*.log
+logs/
+
+# Documentation build
+docs/_build/
+
+# Test coverage
+coverage/
+*.profdata
+
+# Android specific exclusions
+android-service/app/google-services.json
+android-service/app/agconnect-services.json
+
+# CI/CD
+.github/workflows/secrets/
+
+# Distribution
+dist/
+release/
+
+# Configuration files with secrets
+config.local.*
+secrets.*

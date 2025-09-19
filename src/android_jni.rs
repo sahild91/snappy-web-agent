@@ -1,44 +1,51 @@
+// Android JNI bindings for Snappy Web Agent
+// This module provides JNI functions for Android service integration
+
 use jni::objects::{JClass, JString};
-use jni::sys::{jlong, jint, jboolean};
+use jni::sys::{jboolean, jint, jlong};
 use jni::JNIEnv;
-use std::sync::{Arc, Mutex};
-use std::os::unix::io::RawFd;
-use tracing::{info, error, warn};
-use tokio::runtime::Runtime;
-use crate::{start_server, find_available_port};
 use std::collections::HashMap;
+use std::sync::{Arc, Mutex};
+use tokio::task::JoinHandle;
+use crate::find_available_port;
+use tracing::{info, warn, error};
 
-// Android service state
-pub struct AndroidServiceState {
-    pub runtime: Runtime,
-    pub server_handle: Option<tokio::task::JoinHandle<()>>,
-    pub current_port: Option<u16>,
-    pub usb_device_fd: Option<RawFd>,
-    pub device_info: Option<AndroidUsbDevice>,
-    pub is_running: bool,
-    pub connected_devices: HashMap<String, AndroidUsbDevice>,
-}
+#[cfg(feature = "android")]
+use android_logger;
 
+// Android USB device structure
 #[derive(Debug, Clone)]
 pub struct AndroidUsbDevice {
+    pub file_descriptor: i32,
     pub vendor_id: u16,
     pub product_id: u16,
     pub serial_number: String,
-    pub file_descriptor: RawFd,
+}
+
+// Android service state
+#[derive(Debug)]
+pub struct AndroidServiceState {
+    pub is_running: bool,
+    pub current_port: Option<u16>,
+    pub runtime: tokio::runtime::Runtime,
+    pub server_handle: Option<JoinHandle<()>>,
+    pub connected_devices: HashMap<String, AndroidUsbDevice>,
+    pub device_info: Option<AndroidUsbDevice>,
+    pub usb_device_fd: Option<i32>,
 }
 
 impl AndroidServiceState {
-    pub fn new() -> Result<Self, String> {
-        let runtime = Runtime::new().map_err(|e| format!("Failed to create Tokio runtime: {}", e))?;
+    pub fn new() -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
+        let runtime = tokio::runtime::Runtime::new()?;
         
         Ok(AndroidServiceState {
+            is_running: false,
+            current_port: None,
             runtime,
             server_handle: None,
-            current_port: None,
-            usb_device_fd: None,
-            device_info: None,
-            is_running: false,
             connected_devices: HashMap::new(),
+            device_info: None,
+            usb_device_fd: None,
         })
     }
     
@@ -79,12 +86,16 @@ impl AndroidServiceState {
     }
 }
 
-// Global service state (boxed to get stable pointer)
+// Global service state
 type ServiceState = Arc<Mutex<AndroidServiceState>>;
 
-// Convert raw pointer back to ServiceState
-unsafe fn handle_to_state(handle: jlong) -> ServiceState {
-    Arc::from_raw(handle as *const Mutex<AndroidServiceState>)
+// Helper function to safely clone Arc from raw pointer
+unsafe fn handle_to_state_clone(handle: jlong) -> ServiceState {
+    let ptr = handle as *const Mutex<AndroidServiceState>;
+    let arc = Arc::from_raw(ptr);
+    let cloned = arc.clone();
+    std::mem::forget(arc); // Don't drop the original
+    cloned
 }
 
 // Convert ServiceState to raw pointer
@@ -94,7 +105,6 @@ fn state_to_handle(state: ServiceState) -> jlong {
 
 // Global state for accessing from other modules
 static mut GLOBAL_SERVICE_STATE: Option<ServiceState> = None;
-static GLOBAL_STATE_INIT: std::sync::Once = std::sync::Once::new();
 
 // Get global service state (for use by serial.rs and other modules)
 pub fn get_android_service_state() -> Option<ServiceState> {
@@ -110,43 +120,40 @@ fn set_global_service_state(state: ServiceState) {
     }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn Java_com_yudurobotics_snappywebagent_SnappyWebAgentService_nativeInit(
-    env: JNIEnv,
+    _env: JNIEnv,
     _class: JClass,
 ) -> jlong {
     // Initialize Android logging
+    #[cfg(feature = "android")]
     android_logger::init_once(
         android_logger::Config::default()
             .with_max_level(log::LevelFilter::Debug)
             .with_tag("SnappyWebAgent")
     );
 
-    info!("Initializing Android Snappy Web Agent service");
+    info!("Initializing Android service");
 
-    match AndroidServiceState::new() {
-        Ok(state) => {
-            let service_state = Arc::new(Mutex::new(state));
-            let handle = state_to_handle(service_state.clone());
-            
-            // Set global state for access from other modules
-            GLOBAL_STATE_INIT.call_once(|| {
-                set_global_service_state(service_state.clone());
-            });
-            
-            info!("Android service initialized successfully, handle: {}", handle);
-            handle
-        }
+    let service_state = match AndroidServiceState::new() {
+        Ok(state) => state,
         Err(e) => {
-            error!("Failed to initialize Android service: {}", e);
-            0
+            error!("Failed to create service state: {}", e);
+            return 0;
         }
-    }
+    };
+
+    let state = Arc::new(Mutex::new(service_state));
+    set_global_service_state(state.clone());
+    
+    let handle = state_to_handle(state);
+    info!("Android service initialized, handle: {}", handle);
+    handle
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn Java_com_yudurobotics_snappywebagent_SnappyWebAgentService_nativeStart(
-    env: JNIEnv,
+    _env: JNIEnv,
     _class: JClass,
     handle: jlong,
 ) {
@@ -157,56 +164,79 @@ pub extern "C" fn Java_com_yudurobotics_snappywebagent_SnappyWebAgentService_nat
         return;
     }
 
-    let state = unsafe { handle_to_state(handle) };
-    let mut service_state = match state.lock() {
-        Ok(guard) => guard,
-        Err(e) => {
-            error!("Failed to lock service state: {}", e);
+    let state = unsafe { handle_to_state_clone(handle) };
+    
+    // Check if already running
+    {
+        let service_state = match state.lock() {
+            Ok(guard) => guard,
+            Err(e) => {
+                error!("Failed to lock service state: {}", e);
+                return;
+            }
+        };
+
+        if service_state.is_running {
+            info!("Service is already running");
             return;
         }
-    };
-
-    if service_state.is_running {
-        info!("Service is already running");
-        return;
     }
 
-    info!("Starting Android server with port discovery...");
+    // Start the server in a background task
+    let state_for_spawn = state.clone();
     
-    // Clone the state Arc for the async task
-    let state_for_task = state.clone();
-    
-    // Start the server in the background
-    let server_handle = service_state.runtime.spawn(async move {
-        match find_available_port(8436, 100).await {
-            Ok(port) => {
-                info!("Found available port: {}, starting Android server", port);
-                
-                // Update the port in the state
-                if let Ok(mut state_guard) = state_for_task.lock() {
-                    state_guard.current_port = Some(port);
-                }
-                
-                start_android_server(port).await;
-            }
+    let handle_result = {
+        let mut service_state = match state.lock() {
+            Ok(guard) => guard,
             Err(e) => {
-                error!("Failed to find available port: {}", e);
+                error!("Failed to lock service state: {}", e);
+                return;
             }
-        }
-    });
+        };
 
-    service_state.server_handle = Some(server_handle);
-    service_state.is_running = true;
-    
-    // Leak the Arc to keep the state alive
-    std::mem::forget(state);
+        service_state.runtime.spawn(async move {
+            // Use String error to make it Send
+            let port = match find_available_port(8436, 100).await {
+                Ok(port) => {
+                    info!("Found available port: {}", port);
+                    
+                    // Update the port in the state
+                    if let Ok(mut state_guard) = state_for_spawn.lock() {
+                        state_guard.current_port = Some(port);
+                    }
+                    
+                    port
+                }
+                Err(e) => {
+                    error!("Failed to find available port: {}", e);
+                    return;
+                }
+            };
+            
+            start_android_server(port).await;
+        })
+    };
+
+    // Update state with the server handle
+    {
+        let mut service_state = match state.lock() {
+            Ok(guard) => guard,
+            Err(e) => {
+                error!("Failed to lock service state for handle update: {}", e);
+                return;
+            }
+        };
+
+        service_state.server_handle = Some(handle_result);
+        service_state.is_running = true;
+    }
     
     info!("Android service started successfully");
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn Java_com_yudurobotics_snappywebagent_SnappyWebAgentService_nativeStop(
-    env: JNIEnv,
+    _env: JNIEnv,
     _class: JClass,
     handle: jlong,
 ) {
@@ -217,7 +247,8 @@ pub extern "C" fn Java_com_yudurobotics_snappywebagent_SnappyWebAgentService_nat
         return;
     }
 
-    let state = unsafe { handle_to_state(handle) };
+    let state = unsafe { handle_to_state_clone(handle) };
+    
     let mut service_state = match state.lock() {
         Ok(guard) => guard,
         Err(e) => {
@@ -239,15 +270,12 @@ pub extern "C" fn Java_com_yudurobotics_snappywebagent_SnappyWebAgentService_nat
     service_state.is_running = false;
     service_state.current_port = None;
     
-    // Leak the Arc to keep the state alive
-    std::mem::forget(state);
-    
     info!("Android service stopped");
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn Java_com_yudurobotics_snappywebagent_SnappyWebAgentService_nativeDestroy(
-    env: JNIEnv,
+    _env: JNIEnv,
     _class: JClass,
     handle: jlong,
 ) {
@@ -258,7 +286,7 @@ pub extern "C" fn Java_com_yudurobotics_snappywebagent_SnappyWebAgentService_nat
         return;
     }
 
-    let state = unsafe { handle_to_state(handle) };
+    let state = unsafe { handle_to_state_clone(handle) };
     
     // Stop the service first
     {
@@ -285,13 +313,18 @@ pub extern "C" fn Java_com_yudurobotics_snappywebagent_SnappyWebAgentService_nat
         GLOBAL_SERVICE_STATE = None;
     }
     
-    // Don't forget the Arc here - let it drop naturally
+    // Properly drop the original Arc
+    unsafe {
+        let ptr = handle as *const Mutex<AndroidServiceState>;
+        let _arc = Arc::from_raw(ptr); // This will drop when it goes out of scope
+    }
+    
     info!("Android service destroyed");
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn Java_com_yudurobotics_snappywebagent_SnappyWebAgentService_nativeSetUsbDevice(
-    env: JNIEnv,
+    mut env: JNIEnv,
     _class: JClass,
     handle: jlong,
     file_descriptor: jint,
@@ -307,15 +340,23 @@ pub extern "C" fn Java_com_yudurobotics_snappywebagent_SnappyWebAgentService_nat
         return;
     }
 
-    let serial_str = match env.get_string(serial_number) {
+    let serial_str = match env.get_string(&serial_number) {
         Ok(s) => s.into(),
         Err(e) => {
-            error!("Failed to convert serial number string: {}", e);
-            "unknown".to_string()
+            error!("Failed to get serial number string: {}", e);
+            return;
         }
     };
 
-    let state = unsafe { handle_to_state(handle) };
+    let device = AndroidUsbDevice {
+        file_descriptor: file_descriptor as i32,
+        vendor_id: vendor_id as u16,
+        product_id: product_id as u16,
+        serial_number: serial_str,
+    };
+
+    let state = unsafe { handle_to_state_clone(handle) };
+    
     let mut service_state = match state.lock() {
         Ok(guard) => guard,
         Err(e) => {
@@ -324,36 +365,29 @@ pub extern "C" fn Java_com_yudurobotics_snappywebagent_SnappyWebAgentService_nat
         }
     };
 
-    let device_info = AndroidUsbDevice {
-        vendor_id: vendor_id as u16,
-        product_id: product_id as u16,
-        serial_number: serial_str.clone(),
-        file_descriptor: file_descriptor,
-    };
-
-    service_state.add_device(device_info);
+    service_state.add_device(device);
     
-    // Leak the Arc to keep the state alive
-    std::mem::forget(state);
-
-    info!("USB device added - Serial: {}, Total devices: {}", 
-          serial_str, service_state.get_device_count());
+    info!("USB device added - VID: 0x{:04x}, PID: 0x{:04x}, Total devices: {}", 
+          vendor_id, product_id, service_state.get_device_count());
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn Java_com_yudurobotics_snappywebagent_SnappyWebAgentService_nativeRemoveUsbDevice(
-    env: JNIEnv,
+    _env: JNIEnv,
     _class: JClass,
     handle: jlong,
+    vendor_id: jint,
+    product_id: jint,
 ) {
-    info!("Removing USB device");
+    info!("Removing USB device - VID: 0x{:04x}, PID: 0x{:04x}", vendor_id, product_id);
 
     if handle == 0 {
         error!("Invalid service handle");
         return;
     }
 
-    let state = unsafe { handle_to_state(handle) };
+    let state = unsafe { handle_to_state_clone(handle) };
+    
     let mut service_state = match state.lock() {
         Ok(guard) => guard,
         Err(e) => {
@@ -362,30 +396,17 @@ pub extern "C" fn Java_com_yudurobotics_snappywebagent_SnappyWebAgentService_nat
         }
     };
 
-    // For now, remove the primary device
-    // In future versions, could specify which device to remove
-    if let Some(device) = service_state.device_info.as_ref() {
-        let vendor_id = device.vendor_id;
-        let product_id = device.product_id;
-        let removed = service_state.remove_device(vendor_id, product_id);
-        
-        if removed {
-            info!("USB device removed - VID: 0x{:04x}, PID: 0x{:04x}, Remaining: {}", 
-                  vendor_id, product_id, service_state.get_device_count());
-        } else {
-            warn!("Attempted to remove device that wasn't found");
-        }
+    if service_state.remove_device(vendor_id as u16, product_id as u16) {
+        info!("USB device removed - VID: 0x{:04x}, PID: 0x{:04x}, Remaining: {}", 
+              vendor_id, product_id, service_state.get_device_count());
     } else {
-        warn!("No USB device to remove");
+        warn!("Attempted to remove device that wasn't found");
     }
-    
-    // Leak the Arc to keep the state alive
-    std::mem::forget(state);
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn Java_com_yudurobotics_snappywebagent_SnappyWebAgentService_nativeIsRunning(
-    env: JNIEnv,
+    _env: JNIEnv,
     _class: JClass,
     handle: jlong,
 ) -> jboolean {
@@ -393,21 +414,18 @@ pub extern "C" fn Java_com_yudurobotics_snappywebagent_SnappyWebAgentService_nat
         return 0; // false
     }
 
-    let state = unsafe { handle_to_state(handle) };
+    let state = unsafe { handle_to_state_clone(handle) };
     let is_running = match state.lock() {
         Ok(service_state) => service_state.is_running,
         Err(_) => false,
     };
-    
-    // Leak the Arc to keep the state alive
-    std::mem::forget(state);
 
     if is_running { 1 } else { 0 }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn Java_com_yudurobotics_snappywebagent_SnappyWebAgentService_nativeGetPort(
-    env: JNIEnv,
+    _env: JNIEnv,
     _class: JClass,
     handle: jlong,
 ) -> jint {
@@ -415,21 +433,18 @@ pub extern "C" fn Java_com_yudurobotics_snappywebagent_SnappyWebAgentService_nat
         return -1;
     }
 
-    let state = unsafe { handle_to_state(handle) };
+    let state = unsafe { handle_to_state_clone(handle) };
     let port = match state.lock() {
         Ok(service_state) => service_state.current_port.map(|p| p as jint).unwrap_or(-1),
         Err(_) => -1,
     };
-    
-    // Leak the Arc to keep the state alive
-    std::mem::forget(state);
 
     port
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn Java_com_yudurobotics_snappywebagent_SnappyWebAgentService_nativeGetDeviceCount(
-    env: JNIEnv,
+    _env: JNIEnv,
     _class: JClass,
     handle: jlong,
 ) -> jint {
@@ -437,21 +452,18 @@ pub extern "C" fn Java_com_yudurobotics_snappywebagent_SnappyWebAgentService_nat
         return 0;
     }
 
-    let state = unsafe { handle_to_state(handle) };
+    let state = unsafe { handle_to_state_clone(handle) };
     let count = match state.lock() {
         Ok(service_state) => service_state.get_device_count() as jint,
         Err(_) => 0,
     };
-    
-    // Leak the Arc to keep the state alive
-    std::mem::forget(state);
 
     count
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn Java_com_yudurobotics_snappywebagent_SnappyWebAgentService_nativeHasDevice(
-    env: JNIEnv,
+    _env: JNIEnv,
     _class: JClass,
     handle: jlong,
 ) -> jboolean {
@@ -459,16 +471,18 @@ pub extern "C" fn Java_com_yudurobotics_snappywebagent_SnappyWebAgentService_nat
         return 0;
     }
 
-    let state = unsafe { handle_to_state(handle) };
+    let state = unsafe { handle_to_state_clone(handle) };
     let has_device = match state.lock() {
         Ok(service_state) => service_state.device_info.is_some(),
         Err(_) => false,
     };
-    
-    // Leak the Arc to keep the state alive
-    std::mem::forget(state);
 
     if has_device { 1 } else { 0 }
+}
+
+// Register socket handlers function that was missing
+pub fn register_handlers(io: &socketioxide::SocketIo) {
+    io.ns("/", crate::socketio::on_connect);
 }
 
 // Android-specific server implementation
@@ -476,42 +490,43 @@ async fn start_android_server(port: u16) {
     use axum::routing::get;
     use socketioxide::SocketIo;
     use tower_http::cors::{CorsLayer, Any};
-    use crate::socketio;
 
     info!("Starting Android server on port {}", port);
 
-    let (socketio_layer, io) = SocketIo::new_layer();
-    io.ns("/", socketio::on_connect);
-    
-    let cors = CorsLayer::new()
-        .allow_origin(Any)
-        .allow_methods(Any)
-        .allow_headers(Any);
-    
-    let app = axum::Router::new()
-        .route("/", get(|| async { "Snappy Web Agent - Android Service" }))
-        .route("/health", get(|| async { "OK" }))
-        .route("/status", get(get_service_status))
-        .layer(socketio_layer)
-        .layer(cors);
+    let (layer, io) = SocketIo::new_layer();
 
-    let addr = format!("0.0.0.0:{}", port);
-    
-    match tokio::net::TcpListener::bind(&addr).await {
-        Ok(listener) => {
-            info!("Android server listening on {}", addr);
-            if let Err(e) = axum::serve(listener, app).await {
-                error!("Android server error: {}", e);
-            }
-        }
+    // Register socket handlers
+    register_handlers(&io);
+
+    let app = axum::Router::new()
+        .route("/", get(|| async { "Snappy Web Agent Android Service" }))
+        .route("/health", get(|| async { "OK" }))
+        .layer(
+            CorsLayer::new()
+                .allow_origin(Any)
+                .allow_methods(Any)
+                .allow_headers(Any)
+        )
+        .layer(layer);
+
+    let listener = match tokio::net::TcpListener::bind(("0.0.0.0", port)).await {
+        Ok(listener) => listener,
         Err(e) => {
-            error!("Failed to bind Android server to {}: {}", addr, e);
+            error!("Failed to bind to port {}: {}", port, e);
+            return;
         }
+    };
+
+    info!("Android server listening on 0.0.0.0:{}", port);
+
+    if let Err(e) = axum::serve(listener, app).await {
+        error!("Android server error: {}", e);
     }
 }
 
-// HTTP endpoint to get service status
-async fn get_service_status() -> String {
+// Android-specific utility functions
+
+pub fn get_android_service_status() -> String {
     if let Some(state) = get_android_service_state() {
         if let Ok(service_state) = state.lock() {
             let status = serde_json::json!({
@@ -563,6 +578,7 @@ pub fn is_android_device_connected() -> bool {
 }
 
 // Helper function to setup Android logging
+#[cfg(feature = "android")]
 pub fn init_android_logging() {
     android_logger::init_once(
         android_logger::Config::default()
@@ -583,87 +599,5 @@ pub fn log_jni_error(env: &JNIEnv, message: &str) {
             }
         }
     }
-    error!("JNI Error: {}", message);
-}
-
-// Android-specific serial port operations (to be used by serial.rs)
-#[cfg(any(target_os = "android", feature = "android"))]
-pub mod android_serial {
-    use super::*;
-    use std::os::unix::io::{AsRawFd, RawFd};
-    use std::fs::File;
-    
-    pub struct AndroidSerialPort {
-        pub file: File,
-        pub device_info: AndroidUsbDevice,
-    }
-    
-    impl AndroidSerialPort {
-        pub fn from_android_device(device: AndroidUsbDevice) -> Result<Self, String> {
-            // Create File from the file descriptor passed from Java
-            let file = unsafe {
-                std::os::unix::io::FromRawFd::from_raw_fd(device.file_descriptor)
-            };
-            
-            Ok(AndroidSerialPort {
-                file,
-                device_info: device,
-            })
-        }
-    }
-    
-    impl AsRawFd for AndroidSerialPort {
-        fn as_raw_fd(&self) -> RawFd {
-            self.file.as_raw_fd()
-        }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    
-    #[test]
-    fn test_android_service_state_creation() {
-        let state = AndroidServiceState::new().expect("Should create state");
-        assert!(!state.is_running);
-        assert_eq!(state.get_device_count(), 0);
-        assert!(state.device_info.is_none());
-    }
-    
-    #[test]
-    fn test_device_management() {
-        let mut state = AndroidServiceState::new().expect("Should create state");
-        
-        let device1 = AndroidUsbDevice {
-            vendor_id: 0xb1b0,
-            product_id: 0x5508,
-            serial_number: "test123".to_string(),
-            file_descriptor: 10,
-        };
-        
-        let device2 = AndroidUsbDevice {
-            vendor_id: 0xb1b0,
-            product_id: 0x8055,
-            serial_number: "test456".to_string(),
-            file_descriptor: 11,
-        };
-        
-        // Add devices
-        state.add_device(device1.clone());
-        assert_eq!(state.get_device_count(), 1);
-        assert!(state.device_info.is_some());
-        
-        state.add_device(device2.clone());
-        assert_eq!(state.get_device_count(), 2);
-        
-        // Remove device
-        let removed = state.remove_device(0xb1b0, 0x5508);
-        assert!(removed);
-        assert_eq!(state.get_device_count(), 1);
-        
-        // Primary device should switch to the remaining device
-        assert!(state.device_info.is_some());
-        assert_eq!(state.device_info.as_ref().unwrap().product_id, 0x8055);
-    }
+    error!("{}", message);
 }
