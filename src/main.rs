@@ -3,6 +3,9 @@ mod encryption;
 mod serial;
 mod models;
 
+#[cfg(target_os = "android")]
+mod android_jni;
+
 use axum::routing::get;
 use socketioxide::SocketIo;
 use tracing::info;
@@ -134,9 +137,18 @@ async fn start_server() {
 
 #[tokio::main]
 async fn main() {
-    tracing::subscriber
-        ::set_global_default(FmtSubscriber::default())
-        .expect("Failed to set global default subscriber");
+    // Initialize logging based on platform
+    #[cfg(target_os = "android")]
+    {
+        android_jni::init_android_logging();
+    }
+
+    #[cfg(not(target_os = "android"))]
+    {
+        tracing::subscriber
+            ::set_global_default(FmtSubscriber::default())
+            .expect("Failed to set global default subscriber");
+    }
 
     #[cfg(windows)]
     {
@@ -149,6 +161,14 @@ async fn main() {
             }
             return;
         }
+    }
+
+    #[cfg(target_os = "android")]
+    {
+        // On Android, the main function is called from JNI
+        // The actual service logic is handled through JNI calls
+        info!("Android main function called - service should be managed via JNI");
+        return;
     }
 
     // Run as console application (default)

@@ -1,0 +1,111 @@
+plugins {
+    id 'com.android.application'
+}
+
+android {
+    namespace 'com.yudurobotics.snappywebagent'
+    compileSdk rootProject.ext.compileSdkVersion
+
+    defaultConfig {
+        applicationId "com.yudurobotics.snappywebagent"
+        minSdk rootProject.ext.minSdkVersion
+        targetSdk rootProject.ext.targetSdkVersion
+        versionCode 1
+        versionName "1.0.2"
+
+        testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
+        
+        ndk {
+            abiFilters 'arm64-v8a', 'armeabi-v7a', 'x86', 'x86_64'
+        }
+        
+        externalNativeBuild {
+            cmake {
+                cppFlags '-std=c++14'
+                arguments "-DANDROID_STL=c++_shared"
+            }
+        }
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled false
+            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+            
+            // Signing configuration for release builds
+            // Uncomment and configure when you have a release keystore
+            /*
+            signingConfig signingConfigs.release
+            */
+        }
+        debug {
+            applicationIdSuffix '.debug'
+            debuggable true
+        }
+    }
+    
+    // Signing configurations
+    signingConfigs {
+        /*
+        release {
+            storeFile file('release.keystore')
+            storePassword 'your_keystore_password'
+            keyAlias 'snappy-web-agent'
+            keyPassword 'your_key_password'
+        }
+        */
+    }
+    
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+    
+    externalNativeBuild {
+        cmake {
+            path file('CMakeLists.txt')
+            version rootProject.ext.cmakeVersion
+        }
+    }
+    
+    packaging {
+        pickFirst '**/libc++_shared.so'
+        pickFirst '**/libjsc.so'
+    }
+    
+    // NDK configuration
+    ndkVersion rootProject.ext.ndkVersion
+    
+    // Lint options to handle potential issues (updated syntax for AGP 8.2+)
+    lint {
+        checkReleaseBuilds false
+        abortOnError false
+        disable 'MissingTranslation'
+        disable 'ExtraTranslation'
+    }
+    
+    // Build features configuration
+    buildFeatures {
+        buildConfig true
+        viewBinding false
+        dataBinding false
+    }
+}
+
+dependencies {
+    implementation "androidx.appcompat:appcompat:${rootProject.ext.appCompatVersion}"
+    implementation "com.google.android.material:material:${rootProject.ext.materialVersion}"
+    implementation "androidx.constraintlayout:constraintlayout:${rootProject.ext.constraintLayoutVersion}"
+    
+    // Android TV support
+    implementation "androidx.leanback:leanback:${rootProject.ext.leanbackVersion}"
+    implementation "androidx.preference:preference:${rootProject.ext.preferenceVersion}"
+    
+    // USB Host support
+    implementation "androidx.core:core:${rootProject.ext.coreVersion}"
+    
+    // Testing dependencies
+    testImplementation "junit:junit:${rootProject.ext.junitVersion}"
+    androidTestImplementation "androidx.test.ext:junit:${rootProject.ext.androidJunitVersion}"
+    androidTestImplementation "androidx.test.espresso:espresso-core:${rootProject.ext.espressoVersion}"
+}

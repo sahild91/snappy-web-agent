@@ -8,6 +8,10 @@ use crate::encryption::*;
 use tracing::info;
 use socketioxide::extract::SocketRef;
 
+// Android USB support
+#[cfg(any(target_os = "android", feature = "android"))]
+use crate::android_jni::{get_android_usb_device, is_android_device_connected};
+
 // Linux-only helper to fetch serial via sysfs
 #[cfg(target_os = "linux")]
 fn get_serial(dev: &str) -> Option<String> {
@@ -17,6 +21,7 @@ fn get_serial(dev: &str) -> Option<String> {
         .ok()
         .map(|s| s.trim().to_string())
 }
+
 #[cfg(target_os = "windows")]
 fn get_serial(dev: &str) -> Option<String> {
     // For Windows, use USB control transfer to get serial number directly from device
@@ -144,7 +149,17 @@ fn get_device_serial_via_control_transfer(
     None
 }
 
-#[cfg(not(any(target_os = "linux", target_os = "windows")))]
+// Android-specific serial number retrieval
+#[cfg(any(target_os = "android", feature = "android"))]
+fn get_serial(_dev: &str) -> Option<String> {
+    // On Android, get serial from JNI bridge
+    if let Some(device) = get_android_usb_device() {
+        return Some(device.serial_number);
+    }
+    None
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "windows", target_os = "android")))]
 fn get_serial(_dev: &str) -> Option<String> {
     None
 }
@@ -162,12 +177,41 @@ pub async fn start_snappy_with_socket(_socket: SocketRef) {
         let mut last_connected_port: Option<String> = None;
         #[cfg(target_os = "windows")]
         let mut cached_serial: Option<String> = None; // cache serial once obtained
+        
         loop {
             if !is_snappy_collecting() {
                 info!("Snappy data collection stopped");
                 break;
             }
             let mut detected_port: Option<String> = None;
+
+            #[cfg(any(target_os = "android", feature = "android"))]
+            {
+                // Android USB device handling
+                if let Some(device) = get_android_usb_device() {
+                    info!("Android USB device detected: VID 0x{:04x}, PID 0x{:04x}, Serial: {}", 
+                          device.vendor_id, device.product_id, device.serial_number);
+                    
+                    let mut hash_key = hash_key_clone.lock().unwrap();
+                    let serial_number_array: Vec<u32> = device.serial_number
+                        .chars()
+                        .map(|c| c as u32)
+                        .collect();
+                    let serial_number_u8: Vec<u8> = serial_number_array
+                        .iter()
+                        .take(16)
+                        .map(|&c| c as u8)
+                        .collect();
+                    hash_key.clear();
+                    hash_key.extend_from_slice(&serial_number_u8);
+                    
+                    detected_port = Some(format!("ANDROID_USB_FD_{}", device.file_descriptor));
+                } else if is_android_device_connected() {
+                    // Device connected but no file descriptor yet
+                    info!("Android device connected but no file descriptor available yet");
+                    detected_port = Some("ANDROID_USB_PENDING".to_string());
+                }
+            }
 
             #[cfg(target_os = "windows")]
             {
@@ -209,7 +253,7 @@ pub async fn start_snappy_with_socket(_socket: SocketRef) {
                 }
             }
 
-            #[cfg(not(target_os = "windows"))]
+            #[cfg(not(any(target_os = "windows", target_os = "android")))]
             {
                 // For other OS, use serial port enumeration
                 let available_ports = serialport::available_ports().unwrap_or_else(|_| vec![]);
@@ -275,68 +319,86 @@ pub async fn start_snappy_with_socket(_socket: SocketRef) {
                 hash_serial(&serial_number, &mut hash);
                 let counter = 0x0u32;
 
+                #[cfg(any(target_os = "android", feature = "android"))]
+                {
+                    // Android USB communication
+                    if path.starts_with("ANDROID_USB_FD_") {
+                        info!("Starting Android USB data collection");
+                        
+                        if let Some(device) = get_android_usb_device() {
+                            match start_android_usb_data_collection(device, &hash, counter).await {
+                                Ok(_) => {
+                                    info!("Android USB data collection completed");
+                                }
+                                Err(e) => {
+                                    info!("Android USB data collection error: {}", e);
+                                }
+                            }
+                        } else {
+                            info!("No Android USB device available");
+                        }
+                    }
+                }
+
                 #[cfg(target_os = "windows")]
                 {
                     // For Windows, use USB communication directly (single session with one-time interface claim)
                     info!("Device connected for snappy data collection via USB");
 
-                    #[cfg(target_os = "windows")]
-                    {
-                        let mut session: Option<UsbSession> = None;
-                        loop {
-                            if !is_snappy_collecting() {
-                                // stop condition
-                                info!("Stopping snappy data collection");
-                                break;
-                            }
+                    let mut session: Option<UsbSession> = None;
+                    loop {
+                        if !is_snappy_collecting() {
+                            // stop condition
+                            info!("Stopping snappy data collection");
+                            break;
+                        }
 
-                            // Establish session if missing
-                            if session.is_none() {
-                                match open_usb_session() {
-                                    Ok(s) => {
-                                        info!(
-                                            "USB session established (iface={}, ep=0x{:02x})",
-                                            s.claimed_iface,
-                                            s.endpoint
-                                        );
-                                        session = Some(s);
-                                    }
-                                    Err(e) => {
-                                        info!("Failed to open USB session: {}", e);
-                                        tokio::time::sleep(
-                                            tokio::time::Duration::from_millis(500)
-                                        ).await;
-                                        continue;
-                                    }
+                        // Establish session if missing
+                        if session.is_none() {
+                            match open_usb_session() {
+                                Ok(s) => {
+                                    info!(
+                                        "USB session established (iface={}, ep=0x{:02x})",
+                                        s.claimed_iface,
+                                        s.endpoint
+                                    );
+                                    session = Some(s);
+                                }
+                                Err(e) => {
+                                    info!("Failed to open USB session: {}", e);
+                                    tokio::time::sleep(
+                                        tokio::time::Duration::from_millis(500)
+                                    ).await;
+                                    continue;
                                 }
                             }
+                        }
 
-                            if let Some(s) = session.as_mut() {
-                                match read_snappy_data_via_usb(s, &hash, counter) {
-                                    Some(Ok(data)) => {
-                                        process_serial_message_with_emit(&data);
-                                    }
-                                    Some(Err(e)) => {
-                                        info!("USB read error: {}", e);
-                                        // Drop session so we re-open (e.g., device unplugged)
-                                        session = None;
-                                        tokio::time::sleep(
-                                            tokio::time::Duration::from_millis(250)
-                                        ).await;
-                                    }
-                                    None => {
-                                        // No data this cycle
-                                        tokio::time::sleep(
-                                            tokio::time::Duration::from_millis(10)
-                                        ).await;
-                                    }
+                        if let Some(s) = session.as_mut() {
+                            match read_snappy_data_via_usb(s, &hash, counter) {
+                                Some(Ok(data)) => {
+                                    process_serial_message_with_emit(&data);
+                                }
+                                Some(Err(e)) => {
+                                    info!("USB read error: {}", e);
+                                    // Drop session so we re-open (e.g., device unplugged)
+                                    session = None;
+                                    tokio::time::sleep(
+                                        tokio::time::Duration::from_millis(250)
+                                    ).await;
+                                }
+                                None => {
+                                    // No data this cycle
+                                    tokio::time::sleep(
+                                        tokio::time::Duration::from_millis(10)
+                                    ).await;
                                 }
                             }
                         }
                     }
                 }
 
-                #[cfg(not(target_os = "windows"))]
+                #[cfg(not(any(target_os = "windows", target_os = "android")))]
                 {
                     // For other OS, use serial port communication
                     match serialport::new(&path, 230400).timeout(Duration::from_secs(2)).open() {
@@ -397,6 +459,68 @@ pub async fn start_snappy_with_socket(_socket: SocketRef) {
     serial_port_checker_t.await.expect("Failed to start serial port checker for snappy");
 }
 
+// Android-specific USB data collection
+#[cfg(any(target_os = "android", feature = "android"))]
+async fn start_android_usb_data_collection(
+    device: crate::android_jni::AndroidUsbDevice,
+    hash: &[u8; 32],
+    counter: u32,
+) -> Result<(), String> {
+    use std::os::unix::io::{AsRawFd, FromRawFd};
+    use std::fs::File;
+    use std::io::{Read, BufReader, BufRead};
+
+    info!("Starting Android USB data collection for device FD: {}", device.file_descriptor);
+
+    // Create a File from the file descriptor provided by Java
+    let file = unsafe {
+        File::from_raw_fd(device.file_descriptor)
+    };
+
+    let mut reader = BufReader::new(file);
+    let mut line_buffer = String::new();
+
+    loop {
+        if !crate::socketio::is_snappy_collecting() {
+            info!("Stopping Android USB data collection");
+            break;
+        }
+
+        // Try to read a line (CRLF terminated)
+        match reader.read_line(&mut line_buffer) {
+            Ok(0) => {
+                // EOF reached, device disconnected
+                info!("Android USB device disconnected (EOF)");
+                break;
+            }
+            Ok(_) => {
+                // Remove CRLF
+                let message = line_buffer.trim_end_matches(&['\r', '\n'][..]);
+                
+                if !message.is_empty() {
+                    // Decrypt the message
+                    let mut decrypted = vec![0u8; message.len()];
+                    chacha20_decrypt(hash, counter, message.as_bytes(), &mut decrypted);
+                    
+                    // Process and emit the decrypted data
+                    process_serial_message_with_emit(&decrypted);
+                }
+                
+                line_buffer.clear();
+            }
+            Err(e) => {
+                info!("Android USB read error: {}", e);
+                tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+            }
+        }
+        
+        // Small delay to prevent busy waiting
+        tokio::time::sleep(tokio::time::Duration::from_millis(1)).await;
+    }
+
+    Ok(())
+}
+
 fn process_serial_message_with_emit(message: &[u8]) {
     use crate::socketio::emit_snap_data;
 
@@ -423,6 +547,11 @@ fn process_serial_message_with_emit(message: &[u8]) {
 }
 
 pub fn is_device_connected(vid: u16, pids: &[u16]) -> bool {
+    #[cfg(any(target_os = "android", feature = "android"))]
+    {
+        return is_android_device_connected();
+    }
+
     #[cfg(target_os = "windows")]
     {
         // For Windows, check USB devices directly
@@ -452,7 +581,7 @@ pub fn is_device_connected(vid: u16, pids: &[u16]) -> bool {
         false
     }
 
-    #[cfg(not(target_os = "windows"))]
+    #[cfg(not(any(target_os = "windows", target_os = "android")))]
     {
         // For other OS, use serial port enumeration
         let ports = serialport::available_ports().unwrap_or_else(|_| vec![]);
@@ -467,6 +596,7 @@ pub fn is_device_connected(vid: u16, pids: &[u16]) -> bool {
     }
 }
 
+// Windows-specific code
 #[cfg(target_os = "windows")]
 struct UsbDeviceInfo {
     serial_number: Option<String>,

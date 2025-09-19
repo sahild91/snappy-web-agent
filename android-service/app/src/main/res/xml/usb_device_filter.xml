@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- USB device filter for Snappy devices -->
+    <usb-device vendor-id="45488" product-id="21768" />  <!-- 0xb1b0, 0x5508 in decimal -->
+    <usb-device vendor-id="45488" product-id="32853" />  <!-- 0xb1b0, 0x8055 in decimal -->
+</resources>

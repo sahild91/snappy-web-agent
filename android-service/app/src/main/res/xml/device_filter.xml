@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- USB device filters for Snappy devices -->
+    <!-- VID: 0xb1b0, PIDs: 0x5508, 0x8055 -->
+    
+    <usb-device vendor-id="45488" product-id="21768" />
+    <usb-device vendor-id="45488" product-id="32853" />
+    
+    <!-- 
+    Decimal values:
+    VID 0xb1b0 = 45488
+    PID 0x5508 = 21768  
+    PID 0x8055 = 32853
+    -->
+</resources>

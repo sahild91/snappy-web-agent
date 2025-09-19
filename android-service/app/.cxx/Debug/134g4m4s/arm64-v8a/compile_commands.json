@@ -1,0 +1,7 @@
+[
+{
+  "directory": "D:/Workspace/Rust_Workspace/snappy-web-agent(1)/android-service/app/.cxx/Debug/134g4m4s/arm64-v8a",
+  "command": "C:\\Users\\Sahil\\AppData\\Local\\Android\\Sdk\\ndk\\27.0.12077973\\toolchains\\llvm\\prebuilt\\windows-x86_64\\bin\\clang++.exe --target=aarch64-none-linux-android21 --sysroot=C:/Users/Sahil/AppData/Local/Android/Sdk/ndk/27.0.12077973/toolchains/llvm/prebuilt/windows-x86_64/sysroot -Dsnappy_web_agent_EXPORTS -ID:/Workspace/Rust_Workspace/snappy-web-agent(1)/android-service/app/src/main/cpp -g -DANDROID -fdata-sections -ffunction-sections -funwind-tables -fstack-protector-strong -no-canonical-prefixes -D_FORTIFY_SOURCE=2 -Wformat -Werror=format-security  -std=c++14 -fno-limit-debug-info  -fPIC -o CMakeFiles\\snappy_web_agent.dir\\src\\main\\cpp\\jni_wrapper.cpp.o -c D:\\Workspace\\Rust_Workspace\\snappy-web-agent(1)\\android-service\\app\\src\\main\\cpp\\jni_wrapper.cpp",
+  "file": "D:\\Workspace\\Rust_Workspace\\snappy-web-agent(1)\\android-service\\app\\src\\main\\cpp\\jni_wrapper.cpp"
+}
+]
